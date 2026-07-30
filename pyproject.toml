@@ -1,0 +1,41 @@
+[project]
+name = "expense-analysis"
+version = "0.1.0"
+description = "A privacy-first, local expense tracker and analysis dashboard."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pandas>=2.3,<3",
+    "plotly>=6.2,<7",
+    "streamlit>=1.47,<2",
+]
+
+[project.scripts]
+expense-add = "expense_analysis.cli:add_main"
+expense-analyze = "expense_analysis.cli:analyze_main"
+expense-import = "expense_analysis.cli:import_main"
+expense-export = "expense_analysis.cli:export_main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4,<9",
+    "ruff>=0.12,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/expense_analysis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

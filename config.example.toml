@@ -1,0 +1,50 @@
+[categories]
+personal = [
+    "Food",
+    "Dining Out",
+    "Entertainment",
+    "Transportation",
+    "Daily Necessities",
+    "Sports",
+    "Clothes",
+    "Cell Phone",
+    "Laundry",
+    "Medicine",
+    "Church",
+    "Tech",
+    "Stationary",
+]
+fixed = [
+    "Tuition",
+    "Housing and Meal Plan",
+    "School Fees",
+    "Insurance",
+    "Flight",
+    "Hotel",
+    "Travel",
+]
+
+[choices]
+accounts = ["Checking", "Credit Card", "Cash"]
+payment_methods = ["Card", "Mobile Wallet", "Bank Transfer", "Online", "Cash"]
+
+[defaults]
+account = "Checking"
+payment_method = "Card"
+
+[category_rules]
+coffee = "Dining Out"
+grocery = "Food"
+pharmacy = "Medicine"
+
+[academic_calendar]
+fall_months = [9, 10, 11, 12]
+winter_months = [1, 2, 3]
+spring_months = [4, 5, 6]
+summer_months = [7, 8]
+
+# Optional exact ranges override the month fallback above.
+[[academic_periods]]
+label = "Fall 2026"
+start = "2026-09-21"
+end = "2026-12-11"

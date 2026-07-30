@@ -1,0 +1,38 @@
+# Private financial data — keep all real spending data local.
+data/
+my_expenses.csv
+*.sqlite
+*.sqlite3
+*.db
+/config.toml
+
+# Generated reports and charts.
+output/
+
+# Local secrets and configuration.
+.env
+.env.*
+!.env.example
+
+# Python environments, caches, and tooling.
+.venv/
+.uv-cache/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Packaging/build output.
+build/
+dist/
+*.egg-info/
+
+# Editors and operating systems.
+.DS_Store
+.idea/
+.vscode/
