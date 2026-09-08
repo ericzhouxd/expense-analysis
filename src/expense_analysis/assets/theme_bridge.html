@@ -1,0 +1,28 @@
+<script>
+// CSS-only surfaces follow the built-in Light/Dark setting, including changes
+// that do not rerun Python. No network, storage, or financial-data access.
+(() => {
+  window.jizhangThemeObserver?.disconnect();
+  let pending = false;
+  const sync = () => {
+    pending = false;
+    const app = document.querySelector('.stApp');
+    if (!app) return;
+    const rgb = getComputedStyle(app).backgroundColor.match(/[\d.]+/g);
+    if (!rgb || rgb.length < 3) return;
+    const brightness = .2126 * Number(rgb[0]) + .7152 * Number(rgb[1]) + .0722 * Number(rgb[2]);
+    const theme = brightness < 128 ? 'dark' : 'light';
+    if (document.documentElement.dataset.jizhangTheme !== theme) {
+      document.documentElement.dataset.jizhangTheme = theme;
+    }
+  };
+  const observer = new MutationObserver(() => {
+    if (!pending) { pending = true; requestAnimationFrame(sync); }
+  });
+  observer.observe(document.head, {childList: true, subtree: true, characterData: true});
+  const app = document.querySelector('.stApp');
+  if (app) observer.observe(app, {attributes: true, attributeFilter: ['class', 'style']});
+  window.jizhangThemeObserver = observer;
+  requestAnimationFrame(sync);
+})();
+</script>

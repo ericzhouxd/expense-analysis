@@ -1,4 +1,4 @@
-# Local Spending
+# 記帳
 
 A private, local-first expense tracker and analysis dashboard. Transactions stay in
 an ignored SQLite database on your computer; the app binds only to `127.0.0.1` and
@@ -44,12 +44,17 @@ fields, unknown categories, category rules, and duplicate transactions.
 - 3-, 6-, and 12-month rolling calculations
 - Like-for-like month and year comparisons
 - Partial-period labels and end-of-month run-rate projections
-- Monthly category budgets and variance tracking
+- UCLA monthly/quarterly spending plans with cohort tuition, bill reserves and everyday allowance
 - Spending-driver, recurring-charge, and anomaly analysis
 - Cash-flow, savings-rate, and academic-period analysis
-- Calm, lightweight interface with list and editing views
+- Sharp editorial/Y2K interface with brushed-metal and halftone textures
+- Light and dark themes, compact text, and locally bundled fonts
 
 ## Local commands
+
+Switch appearance through the top-right **⋮ → Light / Dark** controls.
+After updating from the old design, restart Streamlit once to load the new theme
+configuration and local font serving.
 
 ```bash
 # Add a transaction interactively

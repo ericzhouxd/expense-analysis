@@ -1,4 +1,4 @@
-# Local Spending user guide
+# 記帳 user guide
 
 ## Starting the application
 
@@ -14,13 +14,27 @@ interface.
 
 ## Navigation and filters
 
+### Appearance
+
+Use the top-right **⋮** menu's theme controls to select **Light**, **Dark**,
+or **System**. This controls the entire application, including charts,
+editable tables, forms, and textured panels. Restart the server once after upgrading
+from the earlier design so the new theme configuration and bundled fonts load.
+
+The interface uses square grids, brushed-metal headers, and dotted balance panels.
+Condensed numerals emphasize amounts; smaller monospace text handles labels and
+controls. All three font families are served locally. There are no remote font
+services, campus photos, or promotional slogans.
+
+### Pages
+
 The sidebar contains the seven application areas:
 
 - **Overview** summarizes the latest personal-spending period.
 - **Transactions** provides a readable list and an editing table.
 - **Add transaction** records a new expense, refund, income item, or transfer.
 - **Import / Export** validates incoming CSVs and creates local backups.
-- **Budgets** stores monthly limits for personal categories.
+- **Budgets** plans monthly and quarterly everyday spending after UCLA costs and bills.
 - **Advanced insights** shows cash flow, unusual purchases, recurring charges,
   spending drivers, and academic-period comparisons.
 - **Settings** describes privacy status and local configuration.
@@ -75,21 +89,78 @@ uv run expense-import /path/to/transactions.csv
 
 ## Budgets
 
-Choose a month, enter limits for the categories you care about, and save. Progress
-bars use:
+The UCLA spending plan replaces the old category-limit editor. Start by choosing
+your UC entry cohort, housing benchmark and tuition residency. The first draft
+uses the **2024–25 cohort** with current **2026–27 undergraduate living estimates**.
+Other supported cohorts are 2025–26 and 2026–27. Estimates come from
+[UCLA Financial Aid](https://financialaid.ucla.edu/go/coa), verified September 8, 2026.
+Tuition includes student services; campus fees and insurance are separate.
 
-- Green below 80%
-- Gold from 80% through 100%
-- Coral above 100%
+1. Choose the first budget month and nine or twelve months of coverage.
+2. Check the nine-month target. Add a separate summer target for a twelve-month
+   plan; the app does not divide a nine-month COA across twelve months.
+3. Enter real rent, utilities, internet, insurance and any other commitments.
+   Rent and utilities start at zero because the app does not know your bills.
+4. Choose each bill's cycle: monthly amount, quarterly amount, or one total for
+   its coverage. First month is numbered from 1. Extend lease coverage to twelve
+   months when appropriate; changing the plan length does not change bill rows.
+5. Map exact transaction categories to bills (comma-separated). Confirm the
+   setup and save. Nothing is saved automatically.
 
-Budgets are stored locally in the same SQLite database as transactions.
+The main calculation is:
+
+```text
+Spending target − committed costs − protected buffer = everyday allowance
+Everyday allowance + carry within quarter − net everyday spending = remaining
+```
+
+Tuition, insurance and other coverage-total bills are spread over their coverage
+months even if paid upfront. A quarterly bill repeats every three months from its
+first coverage month. Paying a bill uses its reserve, not a second deduction.
+Overruns reduce the allowance. If a finalized bill is cheaper, edit its reserve
+down to release the difference; an unpaid bill is never mistaken for spare money.
+Use separate, nonoverlapping bill rows for seasonal rent changes or unequal fees.
+For quarter-specific tuition tracking, use a quarterly amount or separate rows
+instead of the default whole-year tuition reserve.
+
+Quarterly allowance is divided evenly across its three months, with exact-cent
+rounding. The breakdown shows a smoothing adjustment where needed. Both positive
+and negative monthly remaining amounts carry within a quarter; there is no
+automatic carry between quarters. The last month's remaining equals the quarter's
+remaining; do not sum monthly remaining figures (they include earlier balances).
+Budget quarters are consecutive three-month blocks, **not official UCLA term
+dates**. With the default October start, Q1 is October–December.
+
+All expenses/refunds inside the plan count, including unknown categories and
+travel. Those not matched to a commitment count as everyday spending. Income and
+transfers do not change the target. Activity filters never limit the budget ledger.
+Combined housing/meal-plan bills should be mapped and reserved once. If a local
+`config.toml` overrides categories, add Rent, Utilities and Internet there or map
+the categories you already use.
+
+Use **Payment timing & transaction review** for tuition paid before the plan or
+refunds belonging to an earlier bill cycle. Assign a budget month; the original
+transaction date and other pages' cash-flow calculations remain unchanged.
+Remove an override by choosing **Use transaction date**. Review **Expenses included
+in this period** to check each transaction's treatment.
+
+The weekly guide spreads remaining allowance across days left in the selected
+period (up to seven days), never below zero. Future views assume no additional
+unrecorded spending. This is a spending ceiling, **not a bank balance or a promise
+of funding**. A waived insurance bill does not automatically lower the COA-based
+target: lower the target too if that is your intended policy.
+
+The app keeps one active local plan. Its public reference snapshot does not
+silently update when tuition tables change. The old monthly category budgets
+remain in SQLite for preservation but are no longer shown. Private plans and
+payment allocations are stored in the same ignored database as transactions.
 
 ## Understanding the overview
 
 The overview prioritizes four questions:
 
 1. How much personal spending occurred in the latest period?
-2. How much budget remains?
+2. How much everyday allowance remains under the new plan?
 3. How does the period compare with the previous month?
 4. What is the current month-end run-rate?
 
@@ -115,6 +186,16 @@ Recurring and anomaly results are review signals, not financial conclusions.
 
 Use **Import / Export** or `uv run expense-export` to create a CSV backup. Exported
 files contain private financial information and should be stored securely.
+CSV exports contain transactions only, not the spending plan or payment
+allocations. For a complete local backup, use SQLite's backup command (the output
+directory is Git-ignored):
+
+```bash
+sqlite3 data/expenses.sqlite3 ".backup 'output/expenses-backup.sqlite3'"
+```
+
+Choose a new filename to keep older backups. Do not publish the database or its
+backup; local storage is not application-level encryption.
 
 The active database is `data/expenses.sqlite3`. The entire `data/` and `output/`
 directories are ignored by Git. Streamlit telemetry is disabled, and the server

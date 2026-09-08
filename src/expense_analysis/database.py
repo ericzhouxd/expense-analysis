@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
@@ -9,6 +10,7 @@ from pathlib import Path
 
 from .config import DATABASE_PATH, ensure_local_directories
 from .models import TransactionDraft, new_transaction_id
+from .spending_plan import SpendingPlan
 
 
 class DuplicateTransactionError(ValueError):
@@ -77,8 +79,30 @@ class Database:
                     PRIMARY KEY (month, category)
                 );
 
-                PRAGMA user_version = 1;
+                CREATE TABLE IF NOT EXISTS spending_plans (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    payload TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 """
+            )
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version < 2:
+                connection.execute("PRAGMA user_version = 2")
+
+    def get_spending_plan(self) -> SpendingPlan | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT payload FROM spending_plans WHERE id = 1").fetchone()
+        return SpendingPlan.from_dict(json.loads(row["payload"])) if row else None
+
+    def save_spending_plan(self, plan: SpendingPlan) -> None:
+        payload = json.dumps(plan.to_dict(), ensure_ascii=False)
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO spending_plans (id, payload) VALUES (1, ?)
+                ON CONFLICT(id) DO UPDATE SET payload = excluded.payload,
+                updated_at = CURRENT_TIMESTAMP""",
+                (payload,),
             )
 
     @staticmethod

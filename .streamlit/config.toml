@@ -5,11 +5,68 @@ gatherUsageStats = false
 address = "127.0.0.1"
 headless = true
 runOnSave = true
+enableStaticServing = true
+
+[client]
+toolbarMode = "viewer"
 
 [theme]
-base = "light"
-primaryColor = "#3D6B57"
-backgroundColor = "#F5F5F0"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#1F2A24"
-font = "sans-serif"
+font = "IBM Plex Mono, monospace"
+headingFont = "IBM Plex Mono, monospace"
+codeFont = "IBM Plex Mono, monospace"
+baseFontSize = 14
+baseRadius = "none"
+buttonRadius = "none"
+headingFontSizes = ["1.6rem", "1.1rem", "1rem"]
+headingFontWeights = [600, 600, 600]
+metricValueFontSize = "1.9rem"
+showWidgetBorder = true
+showSidebarBorder = true
+
+[[theme.fontFaces]]
+family = "IBM Plex Mono"
+url = "app/static/fonts/IBMPlexMono-Regular.ttf"
+weight = 400
+
+[[theme.fontFaces]]
+family = "IBM Plex Mono"
+url = "app/static/fonts/IBMPlexMono-SemiBold.ttf"
+weight = 600
+
+[[theme.fontFaces]]
+family = "Anton"
+url = "app/static/fonts/Anton-Regular.ttf"
+weight = 400
+
+[[theme.fontFaces]]
+family = "Jizhang Wordmark"
+url = "app/static/fonts/Jizhang-Wordmark.ttf"
+weight = 900
+
+[theme.light]
+primaryColor = "#657900"
+backgroundColor = "#E9EAE5"
+secondaryBackgroundColor = "#F5F5F0"
+textColor = "#151713"
+borderColor = "#767971"
+dataframeHeaderBackgroundColor = "#DDDFD8"
+linkColor = "#4C6200"
+
+[theme.dark]
+primaryColor = "#D1F52A"
+backgroundColor = "#111310"
+secondaryBackgroundColor = "#1B1E19"
+textColor = "#EEF0E8"
+borderColor = "#74786D"
+dataframeHeaderBackgroundColor = "#30342D"
+linkColor = "#D1F52A"
+
+[theme.light.sidebar]
+backgroundColor = "#DFE1D9"
+secondaryBackgroundColor = "#F5F5F0"
+textColor = "#151713"
+
+[theme.dark.sidebar]
+backgroundColor = "#090B08"
+secondaryBackgroundColor = "#1B1E19"
+textColor = "#EEF0E8"

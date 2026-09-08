@@ -1,0 +1,62 @@
+"""Presentation regressions use synthetic amounts and public asset metadata only."""
+
+import tomllib
+from pathlib import Path
+
+import pytest
+
+from expense_analysis.presentation import budget_hero_markup, summary_markup, usage_markup
+
+
+@pytest.mark.parametrize("remaining", [12345, 0, -12345, 123456789012])
+def test_budget_panel_preserves_amount_and_state(remaining):
+    markup = budget_hero_markup(
+        dict(
+            remaining=remaining,
+            target=100000,
+            reserved=30000,
+            buffer=1000,
+            allowance=69000,
+            flexible_spent=1234,
+        )
+    )
+    assert f"${abs(remaining) / 100:,.2f}" in markup
+    assert ("Over allowance" if remaining < 0 else "Left to spend") in markup
+    assert "balance-panel" in markup
+    assert "Everyday spent" in markup
+    assert "<img" not in markup
+
+
+def test_summary_escapes_all_dynamic_content():
+    markup = summary_markup([("<script>x</script>", "<img src=x>")], title="<b>Summary</b>")
+    assert "<script>" not in markup and "<img" not in markup
+    assert "&lt;script&gt;" in markup and "&lt;b&gt;Summary" in markup
+
+
+@pytest.mark.parametrize(
+    "spent,ratio,width", [(150, "150%", "100.00"), (-50, "-50%", "0.00"), (25, "25%", "25.00")]
+)
+def test_usage_reports_actual_ratio_and_clamps_only_graphic(spent, ratio, width):
+    markup = usage_markup(spent, 100)
+    assert f'aria-valuetext="{ratio} used"' in markup
+    assert f'aria-valuenow="{width}"' in markup
+
+
+@pytest.mark.parametrize("available", [0, -100])
+def test_usage_handles_nonpositive_allowance(available):
+    assert "No positive everyday allowance" in usage_markup(100, available)
+
+
+def test_both_native_themes_and_three_local_font_families():
+    root = Path(__file__).resolve().parents[1]
+    config = tomllib.loads((root / ".streamlit/config.toml").read_text())
+    theme = config["theme"]
+    assert theme["light"]["backgroundColor"] != theme["dark"]["backgroundColor"]
+    assert theme["baseRadius"] == "none"
+    assert theme["baseFontSize"] == 14
+    assert len({face["family"] for face in theme["fontFaces"]}) == 3
+    for face in theme["fontFaces"]:
+        assert face["url"].startswith("app/static/fonts/")
+        assert (root / face["url"].removeprefix("app/")).is_file()
+    assert config["server"]["address"] == "127.0.0.1"
+    assert config["browser"]["gatherUsageStats"] is False

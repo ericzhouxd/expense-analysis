@@ -29,6 +29,9 @@ DEFAULT_PERSONAL_CATEGORIES = (
 )
 DEFAULT_FIXED_CATEGORIES = (
     "Tuition",
+    "Rent",
+    "Utilities",
+    "Internet",
     "Housing and Meal Plan",
     "School Fees",
     "Insurance",

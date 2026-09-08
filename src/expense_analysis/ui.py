@@ -10,7 +10,6 @@ import streamlit as st
 
 from .analytics import (
     academic_period_spending,
-    budget_status,
     cash_flow_by_month,
     category_spending,
     comparable_year_months,
@@ -22,20 +21,21 @@ from .analytics import (
     spending_drivers,
     transactions_frame,
 )
+from .budget_ui import render_budget_page
 from .config import DATABASE_PATH, AppConfig, load_config
 from .database import Database, DuplicateTransactionError
 from .import_export import ImportPreview, export_csv, preview_csv
 from .models import TransactionDraft, parse_amount_cents
+from .presentation import inject_theme
+from .spending_plan import calculate_plan
 
-PRIMARY = "#3D6B57"
-PRIMARY_DARK = "#254C3D"
-SAGE = "#A9C3B3"
-MINT = "#DDEBE3"
-GOLD = "#C59A4A"
-CORAL = "#C9685D"
-INK = "#1F2A24"
-MUTED = "#6F7C74"
-GRID = "#E5E8E3"
+PRIMARY = "#859A19"
+PRIMARY_DARK = "#657900"
+SAGE = "#A6AC92"
+MINT = "rgba(133,154,25,0.16)"
+GOLD = "#B79738"
+CORAL = "#CA6353"
+GRID = "rgba(128,132,120,0.25)"
 PALETTE = (
     PRIMARY,
     GOLD,
@@ -65,10 +65,8 @@ def _style_figure(figure: go.Figure, *, height: int = 380) -> go.Figure:
         margin={"l": 8, "r": 8, "t": 16, "b": 8},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "Inter, -apple-system, BlinkMacSystemFont, sans-serif"},
-        font_color=INK,
+        font={"family": "IBM Plex Mono, monospace", "size": 11},
         legend_title_text="",
-        hoverlabel={"bgcolor": "white", "bordercolor": GRID, "font_color": INK},
         colorway=PALETTE,
     )
     figure.update_xaxes(showgrid=False)
@@ -183,6 +181,7 @@ def _transaction_list(frame: pd.DataFrame, *, limit: int | None = None) -> None:
 
 @st.cache_resource
 def _database() -> Database:
+    """Open the local database and initialize schema v2 (student spending plans)."""
     database = Database()
     database.initialize()
     return database
@@ -192,8 +191,7 @@ def _render_empty_state() -> None:
     st.html(
         """
         <div class="empty-card">
-            <div class="eyebrow">LOCAL-FIRST BY DESIGN</div>
-            <h2>Your private spending workspace is ready.</h2>
+            <h2>No transactions yet</h2>
             <p>
                 Add a transaction or import a CSV. Everything is stored
                 in a local SQLite database and stays on this computer.
@@ -250,8 +248,8 @@ def _filtered_data(
 def _render_dashboard(database: Database, frame: pd.DataFrame) -> None:
     _page_heading(
         "OVERVIEW",
-        "Your spending, at a glance",
-        "A calm view of what changed and where your money went.",
+        "Overview",
+        "Spending, changes, and your current budget.",
     )
     if frame.empty:
         _render_empty_state()
@@ -259,8 +257,18 @@ def _render_dashboard(database: Database, frame: pd.DataFrame) -> None:
 
     metrics = period_metrics(frame, personal_only=True)
     latest_month = str(frame["month"].max())
-    budgets = budget_status(frame, database.get_budgets(latest_month), latest_month)
-    budget_remaining = float(budgets["remaining"].sum()) if not budgets.empty else None
+    plan = database.get_spending_plan()
+    budget_month = None
+    if plan:
+        budget_month = next(
+            (
+                month
+                for month in calculate_plan(plan, database.list_transactions())["months"]
+                if month["month"] == latest_month
+            ),
+            None,
+        )
+    budget_remaining = budget_month["remaining"] / 100 if budget_month else None
     period_detail = "Partial month" if metrics.is_partial else "Complete month"
     card1, card2, card3, card4 = st.columns(4)
     with card1:
@@ -275,9 +283,9 @@ def _render_dashboard(database: Database, frame: pd.DataFrame) -> None:
         _kpi_card(
             "Budget remaining",
             _currency(budget_remaining) if budget_remaining is not None else "Not set",
-            detail="Across personal categories"
+            detail=f"{latest_month} · full ledger, with rollover"
             if budget_remaining is not None
-            else "Add a monthly plan",
+            else "Open Budgets to set or view your plan",
         )
     with card3:
         _kpi_card(
@@ -431,38 +439,24 @@ def _render_dashboard(database: Database, frame: pd.DataFrame) -> None:
     with right:
         _section_heading(
             f"Budget progress · {latest_month}",
-            "A quick read on your monthly plan",
+            "UCLA spending plan · unaffected by activity filters",
         )
-        if budgets.empty:
+        if budget_month is None:
             st.html(
                 """
                 <div class="soft-empty">
-                    <strong>No budget yet</strong>
-                    <span>Set a few category limits to see progress here.</span>
+                    <strong>No spending plan for this month</strong>
+                    <span>Open Budgets to set up your UCLA target and committed costs.</span>
                 </div>
                 """
             )
         else:
-            budget_rows: list[str] = []
-            for _, budget in budgets.head(6).iterrows():
-                percent = float(budget["percent_used"])
-                width = min(max(percent, 0), 100)
-                remaining = _currency(float(budget["remaining"]))
-                bar_class = "over" if percent > 100 else "near" if percent > 80 else ""
-                budget_rows.append(
-                    f"""
-                    <div class="budget-row">
-                        <div class="budget-label">
-                            <strong>{html.escape(str(budget["category"]))}</strong>
-                            <span>{percent:.0f}% · {remaining} left</span>
-                        </div>
-                        <div class="budget-track">
-                            <div class="budget-fill {bar_class}" style="width:{width:.1f}%"></div>
-                        </div>
-                    </div>
-                    """
-                )
-            st.html(f'<div class="budget-card">{"".join(budget_rows)}</div>')
+            st.metric("Everyday allowance", _currency(budget_month["allowance"] / 100))
+            st.metric("Everyday spent", _currency(budget_month["flexible_spent"] / 100))
+            st.caption(
+                f"Carry within this quarter: {_currency(budget_month['rollover'] / 100)}. "
+                "Bill reserves, tuition and the full breakdown are on Budgets."
+            )
 
     _section_heading("Recent activity", "Your latest local transactions")
     _transaction_list(frame, limit=6)
@@ -774,69 +768,13 @@ def _render_import_export(
     )
 
 
-def _render_budgets(database: Database, frame: pd.DataFrame, config: AppConfig) -> None:
+def _render_budgets(database: Database, config: AppConfig) -> None:
     _page_heading(
-        "MONTHLY PLAN",
+        "YOUR SPENDING PLAN",
         "Budgets",
-        "Set gentle boundaries and see where you still have room.",
+        "Monthly and quarterly allowance after committed costs.",
     )
-    selected_date = st.date_input("Budget month", value=date.today(), key="budget_month")
-    month = selected_date.strftime("%Y-%m")
-    existing = {
-        str(row["category"]): int(row["amount_cents"]) / 100 for row in database.get_budgets(month)
-    }
-    budget_editor = pd.DataFrame(
-        {
-            "Category": config.personal_categories,
-            "Monthly budget": [
-                existing.get(category, 0.0) for category in config.personal_categories
-            ],
-        }
-    )
-    edited = st.data_editor(
-        budget_editor,
-        hide_index=True,
-        width="stretch",
-        disabled=["Category"],
-        column_config={
-            "Monthly budget": st.column_config.NumberColumn(
-                min_value=0.0, step=10.0, format="$%.2f"
-            )
-        },
-    )
-    if st.button("Save budgets", type="primary"):
-        for _, row in edited.iterrows():
-            database.set_budget(
-                month,
-                str(row["Category"]),
-                max(0, parse_amount_cents(row["Monthly budget"])),
-            )
-        st.toast(f"Budgets saved for {month}.")
-
-    status = budget_status(frame, database.get_budgets(month), month)
-    if not status.empty:
-        _section_heading("Progress", f"How {month} is taking shape")
-        progress_rows: list[str] = []
-        for _, budget in status.iterrows():
-            percent = float(budget["percent_used"])
-            width = min(max(percent, 0), 100)
-            bar_class = "over" if percent > 100 else "near" if percent > 80 else ""
-            progress_rows.append(
-                f"""
-                <div class="budget-row roomy">
-                    <div class="budget-label">
-                        <strong>{html.escape(str(budget["category"]))}</strong>
-                        <span>{_currency(float(budget["spent"]))} of
-                        {_currency(float(budget["budget"]))} ·
-                        {_currency(float(budget["remaining"]))} remaining</span>
-                    </div>
-                    <div class="budget-track">
-                        <div class="budget-fill {bar_class}" style="width:{width:.1f}%"></div>
-                    </div>
-                </div>
-                """
-            )
-        st.html(f'<div class="budget-card wide">{"".join(progress_rows)}</div>')
+    render_budget_page(database, config)
 
 
 def _render_insights(database: Database, frame: pd.DataFrame) -> None:
@@ -1047,379 +985,13 @@ def _render_settings(database: Database, config: AppConfig) -> None:
 
 
 def _inject_styles() -> None:
-    st.html(
-        """
-        <style>
-        .stApp { color: #1F2A24; background: #F5F5F0; }
-        [data-testid="stSidebar"] {
-            background: #ECEFEA;
-            border-right: 1px solid #DCE1DA;
-        }
-        [data-testid="stSidebar"] * { color: #38443D; }
-        [data-testid="stMetric"] {
-            background: #FFFFFF;
-            border: 1px solid #E2E6E0;
-            border-radius: 15px;
-            padding: 16px 18px;
-            box-shadow: none;
-        }
-        [data-testid="stMetricLabel"] { color: #6F7C74; }
-        .empty-card {
-            padding: 48px;
-            border-radius: 20px;
-            background: linear-gradient(135deg, #EEF3ED, #F7F3E8);
-            border: 1px solid #DCE4DC;
-            margin-top: 20px;
-        }
-        .empty-card h2 { margin: 8px 0; font-size: 2rem; }
-        .empty-card p { color: #6F7C74; max-width: 620px; font-size: .96rem; }
-        .eyebrow {
-            color: #3D6B57;
-            letter-spacing: .12em;
-            font-weight: 700;
-            font-size: .75rem;
-        }
-        h1, h2, h3 { letter-spacing: -0.02em; }
-        div[data-testid="stDataFrame"] {
-            border: 1px solid #E2E6E0;
-            border-radius: 13px;
-            overflow: hidden;
-        }
-        .block-container {
-            max-width: 1220px;
-            padding-top: 2.8rem;
-            padding-bottom: 4rem;
-        }
-        [data-testid="stHeader"] { background: rgba(245,245,240,.88); }
-        [data-testid="stSidebar"] div[role="radiogroup"] label {
-            border-radius: 10px;
-            padding: .42rem .6rem;
-            margin: .08rem 0;
-        }
-        [data-testid="stSidebar"] div[role="radiogroup"] label:hover {
-            background: rgba(61,107,87,.07);
-        }
-        .wordmark {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            color: #254C3D;
-            font-size: 1.08rem;
-            font-weight: 720;
-            letter-spacing: -.02em;
-            margin: .4rem 0 .2rem;
-        }
-        .wordmark-mark {
-            display: grid;
-            place-items: center;
-            width: 28px;
-            height: 28px;
-            border-radius: 9px;
-            background: #3D6B57;
-            color: white !important;
-            font-size: .85rem;
-        }
-        .sidebar-subtitle {
-            color: #7B867F;
-            font-size: .78rem;
-            margin-bottom: 1.4rem;
-        }
-        .local-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            padding: 7px 10px;
-            border: 1px solid #D6DDD6;
-            background: rgba(255,255,255,.6);
-            border-radius: 999px;
-            color: #526158;
-            font-size: .74rem;
-        }
-        .local-pill::before,
-        .privacy-dot {
-            content: "";
-            width: 7px;
-            height: 7px;
-            border-radius: 50%;
-            background: #4F8069;
-            box-shadow: 0 0 0 3px rgba(79,128,105,.12);
-            flex: none;
-        }
-        .page-heading { margin-bottom: 1.7rem; }
-        .page-heading h1 {
-            color: #1F2A24;
-            font-size: clamp(2rem,3vw,2.75rem);
-            line-height: 1.05;
-            font-weight: 660;
-            letter-spacing: -.045em;
-            margin: .35rem 0 .55rem;
-        }
-        .page-kicker {
-            color: #3D6B57;
-            letter-spacing: .13em;
-            font-weight: 720;
-            font-size: .68rem;
-        }
-        .page-description {
-            color: #6F7C74;
-            max-width: 680px;
-            font-size: .98rem;
-            margin: 0;
-        }
-        .section-heading {
-            display: flex;
-            align-items: baseline;
-            justify-content: space-between;
-            gap: 18px;
-            margin: 2.1rem 0 .8rem;
-        }
-        .section-heading h2 {
-            color: #1F2A24;
-            font-size: 1.18rem;
-            font-weight: 650;
-            letter-spacing: -.025em;
-            margin: 0;
-        }
-        .section-heading span {
-            color: #6F7C74;
-            font-size: .78rem;
-            text-align: right;
-        }
-        .kpi-card {
-            min-height: 150px;
-            background: #FFFFFF;
-            border: 1px solid #E2E6E0;
-            border-radius: 17px;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            box-shadow: 0 3px 14px rgba(37,52,43,.035);
-        }
-        .kpi-card.featured {
-            background: #254C3D;
-            border-color: #254C3D;
-        }
-        .kpi-label {
-            color: #6F7C74;
-            font-size: .76rem;
-            font-weight: 590;
-        }
-        .kpi-value {
-            color: #1F2A24;
-            font-size: clamp(1.55rem,2.1vw,2.15rem);
-            font-weight: 650;
-            letter-spacing: -.045em;
-            white-space: nowrap;
-        }
-        .kpi-foot {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: #89928D;
-            font-size: .69rem;
-            min-height: 22px;
-        }
-        .kpi-card.featured .kpi-label,
-        .kpi-card.featured .kpi-foot { color: #C8D6CE; }
-        .kpi-card.featured .kpi-value { color: #FFFFFF; }
-        .kpi-change {
-            border-radius: 999px;
-            padding: 3px 7px;
-            font-size: .66rem;
-            font-weight: 700;
-        }
-        .kpi-change.calm { background: #E5F2E9; color: #35674F; }
-        .kpi-change.attention { background: #F5E4E0; color: #9C4F47; }
-        .insight-card,
-        .budget-card,
-        .soft-empty {
-            background: rgba(255,255,255,.72);
-            border: 1px solid #E2E6E0;
-            border-radius: 16px;
-            padding: 8px 18px;
-        }
-        .insight-row {
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-            color: #59645E;
-            font-size: .84rem;
-            line-height: 1.42;
-            padding: 14px 2px;
-            border-bottom: 1px solid #E9ECE8;
-        }
-        .insight-row:last-child,
-        .budget-row:last-child,
-        .transaction-row:last-child { border-bottom: none; }
-        .insight-row strong {
-            color: #1F2A24;
-            display: block;
-            font-weight: 630;
-        }
-        .insight-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-top: 5px;
-            background: #A4AAA6;
-            flex: none;
-        }
-        .insight-dot.calm { background: #3D6B57; }
-        .insight-dot.attention { background: #C9685D; }
-        .insight-dot.neutral { background: #C59A4A; }
-        .budget-card { padding: 8px 18px 12px; }
-        .budget-card.wide { padding: 12px 22px 16px; }
-        .budget-row {
-            padding: 12px 0;
-            border-bottom: 1px solid #E9ECE8;
-        }
-        .budget-row.roomy { padding: 17px 0; }
-        .budget-label {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            gap: 12px;
-            margin-bottom: 8px;
-        }
-        .budget-label strong {
-            color: #1F2A24;
-            font-size: .8rem;
-            font-weight: 620;
-        }
-        .budget-label span {
-            color: #6F7C74;
-            font-size: .7rem;
-            text-align: right;
-        }
-        .budget-track {
-            height: 6px;
-            border-radius: 99px;
-            overflow: hidden;
-            background: #E8ECE7;
-        }
-        .budget-fill {
-            height: 100%;
-            border-radius: inherit;
-            background: #3D6B57;
-        }
-        .budget-fill.near { background: #C59A4A; }
-        .budget-fill.over { background: #C9685D; }
-        .soft-empty {
-            min-height: 180px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            text-align: center;
-            color: #6F7C74;
-        }
-        .soft-empty strong { color: #1F2A24; margin-bottom: 5px; }
-        .transaction-list {
-            background: rgba(255,255,255,.7);
-            border: 1px solid #E2E6E0;
-            border-radius: 16px;
-            padding: 0 18px;
-        }
-        .transaction-row {
-            display: flex;
-            justify-content: space-between;
-            gap: 18px;
-            padding: 15px 2px;
-            border-bottom: 1px solid #E8EBE7;
-        }
-        .transaction-title {
-            color: #1F2A24;
-            font-weight: 620;
-            font-size: .88rem;
-        }
-        .transaction-note {
-            color: #66736B;
-            font-size: .76rem;
-            margin-top: 2px;
-        }
-        .transaction-meta {
-            color: #8A938D;
-            font-size: .69rem;
-            margin-top: 4px;
-        }
-        .transaction-amount {
-            font-variant-numeric: tabular-nums;
-            font-weight: 640;
-            font-size: .85rem;
-            white-space: nowrap;
-        }
-        .transaction-amount.expense { color: #39443E; }
-        .transaction-amount.income { color: #3D6B57; }
-        .transaction-amount.transfer { color: #6F7C74; }
-        .privacy-strip,
-        .privacy-hero {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            color: #526159;
-            background: rgba(221,235,227,.7);
-            border: 1px solid #CEDFD4;
-            border-radius: 13px;
-            padding: 13px 16px;
-            font-size: .8rem;
-            margin-bottom: 1.5rem;
-        }
-        .privacy-hero { padding: 18px; }
-        .privacy-hero strong { display: block; color: #254C3D; }
-        .privacy-hero span { color: #66746C; font-size: .75rem; }
-        div[data-testid="stDataEditor"] {
-            border: 1px solid #E2E6E0;
-            border-radius: 13px;
-            overflow: hidden;
-        }
-        [data-testid="stForm"] {
-            background: rgba(255,255,255,.72);
-            border: 1px solid #E2E6E0;
-            border-radius: 17px;
-            padding: 22px;
-        }
-        [data-testid="stExpander"] {
-            background: rgba(255,255,255,.48);
-            border-color: #E2E6E0;
-            border-radius: 13px;
-        }
-        .stButton > button[kind="primary"],
-        .stFormSubmitButton > button[kind="primary"] {
-            background: #254C3D;
-            border-color: #254C3D;
-            border-radius: 10px;
-        }
-        .stButton > button:not([kind="primary"]),
-        .stDownloadButton > button {
-            border-color: #CFD6CF;
-            border-radius: 10px;
-        }
-        h1, h2, h3 { color: #1F2A24; }
-        hr { border-color: #E2E6E0 !important; }
-        @media (max-width: 800px) {
-            .block-container { padding-top: 1.7rem; }
-            .kpi-card { min-height: 128px; }
-            .section-heading {
-                align-items: flex-start;
-                flex-direction: column;
-                gap: 3px;
-            }
-            .section-heading span { text-align: left; }
-            .budget-label {
-                align-items: flex-start;
-                flex-direction: column;
-            }
-        }
-        </style>
-        """
-    )
+    inject_theme()
 
 
 def render_app() -> None:
     st.set_page_config(
-        page_title="Local Spending",
-        page_icon="◒",
+        page_title="記帳",
+        page_icon="▦",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -1427,14 +999,15 @@ def render_app() -> None:
     database = _database()
     config = load_config()
 
+    st.html(
+        '<header class="masthead"><span class="wordmark" lang="zh-Hant">記帳</span>'
+        '<span class="local-pill">Local only</span></header>'
+    )
+
     with st.sidebar:
         st.html(
             """
-            <div class="wordmark">
-                <span class="wordmark-mark">$</span>
-                <span>Local Spending</span>
-            </div>
-            <div class="sidebar-subtitle">A private view of your money</div>
+            <div class="nav-title">Navigation</div>
             """
         )
     page = st.sidebar.radio(
@@ -1449,10 +1022,15 @@ def render_app() -> None:
             "Settings",
         ],
         label_visibility="collapsed",
+        key="main_navigation",
     )
     st.sidebar.divider()
     with st.sidebar:
-        st.html('<span class="local-pill">Local database</span>')
+        st.caption("Appearance: ⋮ → Light / Dark")
+
+    if page == "Budgets":
+        _render_budgets(database, config)
+        return
 
     rows, frame = _filtered_data(database, config)
     if page == "Overview":
@@ -1463,8 +1041,6 @@ def render_app() -> None:
         _render_add(database, config)
     elif page == "Import / Export":
         _render_import_export(database, rows, config)
-    elif page == "Budgets":
-        _render_budgets(database, frame, config)
     elif page == "Advanced insights":
         _render_insights(database, frame)
     else:

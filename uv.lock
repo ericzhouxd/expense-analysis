@@ -121,7 +121,7 @@ dev = [
 requires-dist = [
     { name = "pandas", specifier = ">=2.3,<3" },
     { name = "plotly", specifier = ">=6.2,<7" },
-    { name = "streamlit", specifier = ">=1.47,<2" },
+    { name = "streamlit", specifier = ">=1.60,<2" },
 ]
 
 [package.metadata.requires-dev]
