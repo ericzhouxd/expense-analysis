@@ -27,10 +27,13 @@ def draft():
 
 def test_add_update_and_delete_transaction(database, draft):
     transaction_id = database.add_transaction(draft)
+    assert database.get_transaction(transaction_id)["description"] == "Groceries"
+    assert database.get_transaction("missing") is None
     rows = database.list_transactions()
     assert len(rows) == 1
     assert rows[0]["id"] == transaction_id
     assert rows[0]["amount_cents"] == 4288
+    assert database.list_transaction_categories() == ["Food"]
 
     changed = TransactionDraft(
         transaction_date=draft.transaction_date,

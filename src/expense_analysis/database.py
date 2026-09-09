@@ -268,6 +268,32 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_transaction(self, transaction_id: str) -> dict[str, object] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, transaction_date, description, amount_cents, category,
+                       account, payment_method, merchant, transaction_type, notes,
+                       fingerprint, created_at, updated_at
+                FROM transactions
+                WHERE id = ?
+                """,
+                (transaction_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_transaction_categories(self) -> list[str]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT category
+                FROM transactions
+                WHERE trim(category) != ''
+                ORDER BY category COLLATE NOCASE
+                """
+            ).fetchall()
+        return [str(row["category"]) for row in rows]
+
     def existing_fingerprints(self) -> set[str]:
         with self.connect() as connection:
             rows = connection.execute("SELECT DISTINCT fingerprint FROM transactions").fetchall()

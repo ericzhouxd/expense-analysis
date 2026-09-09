@@ -36,7 +36,7 @@ fields, unknown categories, category rules, and duplicate transactions.
 
 ## What the app includes
 
-- Quick transaction entry with local defaults
+- Quick transaction entry from the Transactions page with keyboard progression
 - Searchable, filterable, bulk-editable transaction table
 - Explicit expenses, refunds, income, and transfers
 - CSV preview, validation, duplicate detection, import, and export

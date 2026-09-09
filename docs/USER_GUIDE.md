@@ -32,11 +32,10 @@ click it again or press **Escape** to return to the page.
 
 ### Pages
 
-The sidebar contains the seven application areas:
+The sidebar contains six application areas:
 
 - **Overview** summarizes the latest personal-spending period.
-- **Transactions** provides a readable list and an editing table.
-- **Add transaction** records a new expense, refund, income item, or transfer.
+- **Transactions** provides transaction entry, a readable list, and an editing table.
 - **Import / Export** validates incoming CSVs and creates local backups.
 - **Budgets** plans monthly and quarterly everyday spending after UCLA costs and bills.
 - **Advanced insights** shows cash flow, unusual purchases, recurring charges,
@@ -49,9 +48,13 @@ transaction list, insights, and exported selection.
 
 ## Adding and editing transactions
 
-Use **Add transaction** for normal entry. Amounts are entered as positive values;
-the selected transaction type determines how the amount affects spending and cash
-flow.
+Open **Transactions** and select **Add transaction** for normal entry. Enter advances
+through the form fields; Enter from **Notes** saves once the required values are filled.
+Shift+Enter adds a new line in Notes. After saving, select **View** in the confirmation
+box to reveal and highlight the new transaction, even when the active filters exclude it.
+The Category field accepts either an existing option or a new category name.
+Amounts are entered as positive values; the selected transaction type determines how
+the amount affects spending and cash flow.
 
 - `expense` increases spending and reduces cash flow.
 - `refund` reduces spending and increases cash flow.

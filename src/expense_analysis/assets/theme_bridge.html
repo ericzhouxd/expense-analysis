@@ -8,6 +8,7 @@
   }
   if (window.jizhangUiKeyHandler) {
     document.removeEventListener('keydown', window.jizhangUiKeyHandler);
+    document.removeEventListener('keydown', window.jizhangUiKeyHandler, true);
   }
   let pending = false;
   const syncThemeChoices = () => {
@@ -31,6 +32,15 @@
       Boolean(document.querySelector('.jizhang-chart-fullscreen')),
     );
   };
+  const syncFocusedTransaction = () => {
+    const row = document.querySelector('[data-jizhang-transaction-focus="true"]');
+    if (!row || window.jizhangFocusedTransaction === row.id) return;
+    window.jizhangFocusedTransaction = row.id;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      row.focus({preventScroll: true});
+      row.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }));
+  };
   const sync = () => {
     pending = false;
     const app = document.querySelector('.stApp');
@@ -44,6 +54,7 @@
     }
     syncThemeChoices();
     syncCharts();
+    syncFocusedTransaction();
   };
   const chooseTheme = (theme) => {
     const openOption = document.querySelector(`[data-testid="stMainMenuItem-theme-${theme}"]`);
@@ -121,7 +132,50 @@
     const chart = event.target.closest('[data-testid="stPlotlyChart"]');
     if (chart) toggleChart(chart);
   };
+  const addFieldSelectors = [
+    '.st-key-add_transaction_date',
+    '.st-key-add_transaction_type',
+    '.st-key-add_transaction_description',
+    '.st-key-add_transaction_merchant',
+    '.st-key-add_transaction_amount',
+    '.st-key-add_transaction_category',
+    '.st-key-add_transaction_account',
+    '.st-key-add_transaction_payment_method',
+    '.st-key-add_transaction_notes',
+  ];
+  const fieldControl = (field) => field?.querySelector(
+    'input:not([type="hidden"]), textarea, [role="combobox"], button',
+  );
+  const handleAddFormEnter = (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return false;
+    const fields = addFieldSelectors.map((selector) => document.querySelector(selector));
+    const index = fields.findIndex((field) => field?.contains(event.target));
+    if (index < 0) return false;
+    if (event.target.getAttribute?.('aria-expanded') === 'true') return false;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (index < fields.length - 1) {
+      fieldControl(fields[index + 1])?.focus();
+      return true;
+    }
+
+    const required = [
+      ['.st-key-add_transaction_description', (value) => value.trim().length > 0],
+      ['.st-key-add_transaction_amount', (value) => Number(value.replace(/[$,]/g, '')) > 0],
+    ];
+    for (const [selector, valid] of required) {
+      const control = fieldControl(document.querySelector(selector));
+      if (!control || !valid(control.value || '')) {
+        control?.focus();
+        return true;
+      }
+    }
+    document.querySelector('.st-key-add_transaction_submit button')?.click();
+    return true;
+  };
   const handleUiKey = (event) => {
+    if (handleAddFormEnter(event)) return;
     const chart = event.target.closest?.('[data-testid="stPlotlyChart"]');
     if (chart && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault();
@@ -134,7 +188,7 @@
     }
   };
   document.addEventListener('click', handleUiClick);
-  document.addEventListener('keydown', handleUiKey);
+  document.addEventListener('keydown', handleUiKey, true);
   window.jizhangUiClickHandler = handleUiClick;
   window.jizhangUiKeyHandler = handleUiKey;
   const observer = new MutationObserver(() => {

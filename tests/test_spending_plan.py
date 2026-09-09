@@ -252,7 +252,6 @@ def test_setup_and_all_pages_use_synthetic_database(plan, tmp_path, monkeypatch)
     for page in [
         "Overview",
         "Transactions",
-        "Add transaction",
         "Import / Export",
         "Budgets",
         "Advanced insights",

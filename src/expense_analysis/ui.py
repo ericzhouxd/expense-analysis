@@ -169,12 +169,29 @@ def _safe_inline(value: object) -> str:
     return html.escape(" ".join(str(value).split()))
 
 
-def _transaction_list_markup(frame: pd.DataFrame, *, limit: int | None = None) -> str:
+def _transaction_list_markup(
+    frame: pd.DataFrame,
+    *,
+    limit: int | None = None,
+    focused_transaction_id: str | None = None,
+) -> str:
     display = frame.sort_values("transaction_date", ascending=False)
+    if focused_transaction_id:
+        focused = display["id"].astype(str).eq(focused_transaction_id)
+        display = pd.concat([display.loc[focused], display.loc[~focused]])
     if limit:
         display = display.head(limit)
     rows: list[str] = []
     for item in display.to_dict("records"):
+        transaction_id = str(item.get("id", ""))
+        focused = transaction_id == focused_transaction_id
+        row_class = "transaction-row is-focused" if focused else "transaction-row"
+        focus_attributes = (
+            f' id="transaction-{html.escape(transaction_id, quote=True)}"'
+            ' data-jizhang-transaction-focus="true" tabindex="-1"'
+            if focused
+            else ""
+        )
         transaction_type = str(item["transaction_type"])
         amount = float(item["amount"])
         if transaction_type == "expense":
@@ -206,7 +223,7 @@ def _transaction_list_markup(frame: pd.DataFrame, *, limit: int | None = None) -
             else ""
         )
         rows.append(
-            f'<div class="transaction-row">'
+            f'<div class="{row_class}"{focus_attributes}>'
             f'<div class="transaction-main">'
             f'<div class="transaction-title">{_safe_inline(title)}</div>'
             f"{secondary}"
@@ -220,8 +237,19 @@ def _transaction_list_markup(frame: pd.DataFrame, *, limit: int | None = None) -
     return f'<div class="transaction-list">{"".join(rows)}</div>'
 
 
-def _transaction_list(frame: pd.DataFrame, *, limit: int | None = None) -> None:
-    st.html(_transaction_list_markup(frame, limit=limit))
+def _transaction_list(
+    frame: pd.DataFrame,
+    *,
+    limit: int | None = None,
+    focused_transaction_id: str | None = None,
+) -> None:
+    st.html(
+        _transaction_list_markup(
+            frame,
+            limit=limit,
+            focused_transaction_id=focused_transaction_id,
+        )
+    )
 
 
 @st.cache_resource
@@ -595,6 +623,29 @@ def _draft_from_editor(row: pd.Series) -> TransactionDraft:
     )
 
 
+def _category_options(database: Database, config: AppConfig) -> list[str]:
+    category_reader = getattr(database, "list_transaction_categories", None)
+    if category_reader is not None:
+        saved_categories = category_reader()
+    else:
+        saved_categories = [
+            str(row["category"])
+            for row in database.list_transactions()
+            if str(row.get("category", "")).strip()
+        ]
+    return list(dict.fromkeys((*config.categories, *saved_categories)))
+
+
+def _get_transaction(database: Database, transaction_id: str) -> dict[str, object] | None:
+    transaction_reader = getattr(database, "get_transaction", None)
+    if transaction_reader is not None:
+        return transaction_reader(transaction_id)
+    return next(
+        (row for row in database.list_transactions() if str(row.get("id", "")) == transaction_id),
+        None,
+    )
+
+
 @st.dialog("Delete marked transactions?")
 def _confirm_delete(database: Database, transaction_ids: list[str]) -> None:
     count = len(transaction_ids)
@@ -610,11 +661,57 @@ def _confirm_delete(database: Database, transaction_ids: list[str]) -> None:
 
 
 def _render_transactions(database: Database, frame: pd.DataFrame, config: AppConfig) -> None:
-    _page_heading(
-        "ACTIVITY",
-        "Transactions",
-        "Browse comfortably or switch to the editing table when you need it.",
-    )
+    heading, add_action = st.columns((5, 1), vertical_alignment="bottom", gap="large")
+    with heading:
+        _page_heading(
+            "ACTIVITY",
+            "Transactions",
+            "Browse comfortably or switch to the editing table when you need it.",
+        )
+    with add_action:
+        if st.button(
+            "Add transaction",
+            type="primary",
+            key="open_add_transaction",
+            width="stretch",
+        ):
+            _add_transaction_dialog(database, config)
+
+    saved_transaction_id = st.session_state.get("saved_transaction_id")
+    if saved_transaction_id and st.session_state.get("show_saved_transaction_notice"):
+        _, notice_column = st.columns((4, 2))
+        with notice_column:
+            notice = st.empty()
+            with notice.container(
+                border=True,
+                key="saved_transaction_notice",
+                horizontal=True,
+                horizontal_alignment="right",
+                vertical_alignment="center",
+                gap="small",
+            ):
+                st.markdown("**Transaction saved.**")
+                view_saved = st.button(
+                    "View",
+                    key="view_saved_transaction",
+                    type="tertiary",
+                )
+            if view_saved:
+                st.session_state["focused_transaction_id"] = saved_transaction_id
+                st.session_state["show_saved_transaction_notice"] = False
+                st.session_state["transaction_view"] = "List"
+                notice.empty()
+
+    focused_transaction_id = st.session_state.get("focused_transaction_id")
+    if focused_transaction_id:
+        focused_row = _get_transaction(database, focused_transaction_id)
+        if focused_row:
+            focused_frame = transactions_frame([focused_row], config)
+            frame = (
+                pd.concat([focused_frame, frame], ignore_index=True)
+                .drop_duplicates(subset="id", keep="first")
+                .reset_index(drop=True)
+            )
     if frame.empty:
         st.info("No transactions match the current filters.")
         return
@@ -624,9 +721,10 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
         ["List", "Edit table"],
         default="List",
         label_visibility="collapsed",
+        key="transaction_view",
     )
     if view == "List":
-        _transaction_list(frame)
+        _transaction_list(frame, focused_transaction_id=focused_transaction_id)
         return
 
     st.caption("Edit fields directly. Marking a row deletes it when you save.")
@@ -659,7 +757,7 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
                 "Amount", min_value=0.01, step=0.01, format="$%.2f", required=True
             ),
             "Category": st.column_config.SelectboxColumn(
-                "Category", options=list(config.categories), required=True
+                "Category", options=_category_options(database, config), required=True
             ),
             "Type": st.column_config.SelectboxColumn(
                 "Type",
@@ -687,21 +785,43 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
         _confirm_delete(database, delete_ids)
 
 
-def _render_add(database: Database, config: AppConfig) -> None:
-    _page_heading(
-        "QUICK ENTRY",
-        "Add a transaction",
-        "A simple record, saved directly to your local database.",
-    )
-    with st.form("add_transaction", clear_on_submit=True):
+@st.dialog("Add a transaction", width="large")
+def _add_transaction_dialog(database: Database, config: AppConfig) -> None:
+    st.caption("Description and amount are required.")
+    with st.form("add_transaction_form", clear_on_submit=True):
         left, right = st.columns(2)
-        transaction_date = left.date_input("Date", value=date.today())
-        transaction_type = right.selectbox("Type", ["expense", "refund", "income", "transfer"])
-        description = st.text_input("Description", placeholder="What was this for?")
-        merchant = st.text_input("Merchant", placeholder="Optional, improves recurring analysis")
+        transaction_date = left.date_input("Date", value=date.today(), key="add_transaction_date")
+        transaction_type = right.selectbox(
+            "Type",
+            ["expense", "refund", "income", "transfer"],
+            key="add_transaction_type",
+        )
+        description = st.text_input(
+            "Description",
+            placeholder="What was this for?",
+            key="add_transaction_description",
+        )
+        merchant = st.text_input(
+            "Merchant",
+            placeholder="Optional, improves recurring analysis",
+            key="add_transaction_merchant",
+        )
         left, right = st.columns(2)
-        amount = left.number_input("Amount", min_value=0.01, step=0.01, format="%.2f")
-        category = right.selectbox("Category", config.categories)
+        amount = left.number_input(
+            "Amount",
+            min_value=0.01,
+            value=None,
+            step=0.01,
+            format="%.2f",
+            placeholder="0.00",
+            key="add_transaction_amount",
+        )
+        category = right.selectbox(
+            "Category",
+            _category_options(database, config),
+            key="add_transaction_category",
+            accept_new_options=True,
+        )
         left, right = st.columns(2)
         account = left.selectbox(
             "Account",
@@ -711,6 +831,7 @@ def _render_add(database: Database, config: AppConfig) -> None:
                 if config.default_account in config.accounts
                 else 0
             ),
+            key="add_transaction_account",
         )
         payment_method = right.selectbox(
             "Payment method",
@@ -720,12 +841,17 @@ def _render_add(database: Database, config: AppConfig) -> None:
                 if config.default_payment_method in config.payment_methods
                 else 0
             ),
+            key="add_transaction_payment_method",
         )
-        notes = st.text_area("Notes", height=80)
-        submitted = st.form_submit_button("Save transaction", type="primary")
+        notes = st.text_area("Notes", height=80, key="add_transaction_notes")
+        submitted = st.form_submit_button(
+            "Save transaction",
+            type="primary",
+            key="add_transaction_submit",
+        )
     if submitted:
         try:
-            database.add_transaction(
+            transaction_id = database.add_transaction(
                 TransactionDraft(
                     transaction_date=transaction_date,
                     description=description,
@@ -741,7 +867,9 @@ def _render_add(database: Database, config: AppConfig) -> None:
         except (ValueError, DuplicateTransactionError) as exc:
             st.error(str(exc))
         else:
-            st.toast("Transaction saved locally.")
+            st.session_state["saved_transaction_id"] = transaction_id
+            st.session_state["show_saved_transaction_notice"] = True
+            st.rerun()
 
 
 def _preview_table(preview: ImportPreview) -> pd.DataFrame:
@@ -1060,7 +1188,6 @@ def render_app() -> None:
         [
             "Overview",
             "Transactions",
-            "Add transaction",
             "Import / Export",
             "Budgets",
             "Advanced insights",
@@ -1089,9 +1216,6 @@ def render_app() -> None:
 
     if page == "Budgets":
         _render_budgets(database, config)
-        return
-    if page == "Add transaction":
-        _render_add(database, config)
         return
     if page == "Settings":
         _render_settings(database, config)

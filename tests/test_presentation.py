@@ -79,3 +79,9 @@ def test_theme_css_preserves_native_sidebar_and_readable_neon_controls():
     assert ".jizhang-chart-fullscreen" in css
     assert "data-jizhang-theme-choice" in bridge
     assert "stMainMenuItem-theme-${theme}" in bridge
+    assert "addFieldSelectors" in bridge
+    assert "add_transaction_notes" in bridge
+    assert "scrollIntoView" in bridge
+    assert "stNumberInputStepDown" in css
+    assert "stNumberInputClearButton" in css
+    assert "InputInstructions" in css

@@ -180,7 +180,6 @@ app = AppTest.from_file("app.py").run(timeout=30)
 for page in [
     "Overview",
     "Transactions",
-    "Add transaction",
     "Import / Export",
     "Budgets",
     "Advanced insights",

@@ -200,6 +200,12 @@ h1, h2, h3 { font-family: var(--ui-font); }
 .transaction-list, .insight-card, .budget-card { padding: 0 14px; }
 .transaction-row { display: flex; justify-content: space-between; gap: 16px;
   padding: 13px 0; border-bottom: 1px solid var(--line); }
+.transaction-row.is-focused { margin: 5px -9px; padding: 13px 9px;
+  color: #12160a; background: var(--accent); border: 1px solid #12160a;
+  box-shadow: 4px 4px 0 #12160a; scroll-margin-block: 25vh; }
+.transaction-row.is-focused .transaction-note,
+.transaction-row.is-focused .transaction-meta,
+.transaction-row.is-focused .transaction-amount { color: #28300b; }
 .transaction-main { min-width: 0; }
 .transaction-title { font-size: 14px; font-weight: 600; line-height: 1.45;
   overflow-wrap: anywhere; }
@@ -229,6 +235,35 @@ h1, h2, h3 { font-family: var(--ui-font); }
 .privacy-hero strong { display: block; color: var(--ink); }
 .privacy-hero span { color: var(--muted); font-size: .75rem; }
 [data-testid='stForm'] { border: 1px solid var(--line); border-radius: 0; background: var(--panel); padding: 18px; }
+.st-key-saved_transaction_notice { min-height: 38px; padding: 3px 7px; background: var(--panel);
+  border-color: var(--positive) !important; }
+.st-key-saved_transaction_notice [data-testid='stMarkdownContainer'] p {
+  margin: 0; font-size: 11px; white-space: nowrap; }
+.st-key-saved_transaction_notice [data-testid^='stBaseButton-'] {
+  min-height: 26px; padding: 2px 7px; }
+[data-testid='InputInstructions'],
+.st-key-add_transaction_amount [data-testid='stNumberInputStepDown'],
+.st-key-add_transaction_amount [data-testid='stNumberInputStepUp'],
+.st-key-add_transaction_amount [data-testid='stNumberInputClearButton'] { display: none !important; }
+.st-key-add_transaction_date input,
+.st-key-add_transaction_description input,
+.st-key-add_transaction_merchant input,
+.st-key-add_transaction_amount input,
+.st-key-add_transaction_notes textarea { padding: 10px 12px !important; }
+.st-key-add_transaction_type [data-baseweb='select'] > div,
+.st-key-add_transaction_category [data-baseweb='select'] > div,
+.st-key-add_transaction_account [data-baseweb='select'] > div,
+.st-key-add_transaction_payment_method [data-baseweb='select'] > div {
+  min-height: 42px; padding-inline: 4px; }
+.st-key-add_transaction_type [role='combobox'],
+.st-key-add_transaction_category [role='combobox'],
+.st-key-add_transaction_account [role='combobox'],
+.st-key-add_transaction_payment_method [role='combobox'] {
+  padding-left: 8px; padding-right: 12px; }
+.st-key-add_transaction_type [data-baseweb='select'] svg,
+.st-key-add_transaction_category [data-baseweb='select'] svg,
+.st-key-add_transaction_account [data-baseweb='select'] svg,
+.st-key-add_transaction_payment_method [data-baseweb='select'] svg { margin-inline: 6px; }
 [data-testid='stWidgetLabel'] p, [data-testid^='stBaseButton-'] p {
   font-size: 11px !important; line-height: 1.4 !important;
   text-transform: uppercase; letter-spacing: .08em; }
