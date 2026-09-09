@@ -1,9 +1,36 @@
 <script>
-// CSS-only surfaces follow the built-in Light/Dark setting, including changes
-// that do not rerun Python. No network, storage, or financial-data access.
+// CSS-only surfaces and the sidebar selector follow Streamlit's native themes.
+// Charts use the same bridge for a local fullscreen view. No network or app-data access.
 (() => {
   window.jizhangThemeObserver?.disconnect();
+  if (window.jizhangUiClickHandler) {
+    document.removeEventListener('click', window.jizhangUiClickHandler);
+  }
+  if (window.jizhangUiKeyHandler) {
+    document.removeEventListener('keydown', window.jizhangUiKeyHandler);
+  }
   let pending = false;
+  const syncThemeChoices = () => {
+    const selected = window.jizhangThemeChoice || 'System';
+    document.querySelectorAll('[data-jizhang-theme-choice]').forEach((control) => {
+      control.setAttribute(
+        'aria-checked',
+        String(control.getAttribute('data-jizhang-theme-choice') === selected),
+      );
+    });
+  };
+  const syncCharts = () => {
+    document.querySelectorAll('[data-testid="stPlotlyChart"]').forEach((chart) => {
+      const expanded = chart.classList.contains('jizhang-chart-fullscreen');
+      chart.setAttribute('role', 'button');
+      chart.setAttribute('tabindex', '0');
+      chart.setAttribute('aria-label', expanded ? 'Exit fullscreen chart' : 'Open chart fullscreen');
+    });
+    document.body.classList.toggle(
+      'jizhang-chart-open',
+      Boolean(document.querySelector('.jizhang-chart-fullscreen')),
+    );
+  };
   const sync = () => {
     pending = false;
     const app = document.querySelector('.stApp');
@@ -15,14 +42,114 @@
     if (document.documentElement.dataset.jizhangTheme !== theme) {
       document.documentElement.dataset.jizhangTheme = theme;
     }
+    syncThemeChoices();
+    syncCharts();
   };
+  const chooseTheme = (theme) => {
+    const openOption = document.querySelector(`[data-testid="stMainMenuItem-theme-${theme}"]`);
+    if (openOption) {
+      openOption.click();
+      window.jizhangThemeChoice = theme;
+      requestAnimationFrame(sync);
+      return;
+    }
+    const menuButton = document.querySelector('[data-testid="stMainMenuButton"]');
+    if (!menuButton) return;
+    menuButton.click();
+    let attempts = 0;
+    const choose = () => {
+      const option = document.querySelector(`[data-testid="stMainMenuItem-theme-${theme}"]`);
+      if (option) {
+        option.click();
+        window.jizhangThemeChoice = theme;
+        requestAnimationFrame(sync);
+      } else if (attempts++ < 20) {
+        requestAnimationFrame(choose);
+      }
+    };
+    requestAnimationFrame(choose);
+  };
+  const readThemeChoice = () => {
+    if (window.jizhangThemeChoice) return;
+    const menuButton = document.querySelector('[data-testid="stMainMenuButton"]');
+    if (!menuButton) return;
+    menuButton.click();
+    let attempts = 0;
+    const read = () => {
+      const selected = document.querySelector(
+        '[data-testid^="stMainMenuItem-theme-"][aria-checked="true"]',
+      );
+      if (selected) {
+        window.jizhangThemeChoice = selected.getAttribute('data-testid').split('-').at(-1);
+        menuButton.click();
+        syncThemeChoices();
+      } else if (attempts++ < 20) {
+        requestAnimationFrame(read);
+      } else {
+        menuButton.click();
+        syncThemeChoices();
+      }
+    };
+    requestAnimationFrame(read);
+  };
+  const resizeChart = (chart) => {
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new Event('resize'));
+      const plot = chart?.querySelector('.js-plotly-plot');
+      if (plot && window.Plotly?.Plots) window.Plotly.Plots.resize(plot);
+    });
+  };
+  const toggleChart = (chart) => {
+    const willExpand = !chart.classList.contains('jizhang-chart-fullscreen');
+    document.querySelectorAll('.jizhang-chart-fullscreen').forEach((openChart) => {
+      openChart.classList.remove('jizhang-chart-fullscreen');
+      openChart.setAttribute('aria-label', 'Open chart fullscreen');
+    });
+    if (willExpand) {
+      chart.classList.add('jizhang-chart-fullscreen');
+      chart.setAttribute('aria-label', 'Exit fullscreen chart');
+    }
+    document.body.classList.toggle('jizhang-chart-open', willExpand);
+    resizeChart(chart);
+  };
+  const handleUiClick = (event) => {
+    const themeChoice = event.target.closest('[data-jizhang-theme-choice]');
+    if (themeChoice) {
+      chooseTheme(themeChoice.getAttribute('data-jizhang-theme-choice'));
+      return;
+    }
+    const chart = event.target.closest('[data-testid="stPlotlyChart"]');
+    if (chart) toggleChart(chart);
+  };
+  const handleUiKey = (event) => {
+    const chart = event.target.closest?.('[data-testid="stPlotlyChart"]');
+    if (chart && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault();
+      toggleChart(chart);
+      return;
+    }
+    if (event.key === 'Escape') {
+      const openChart = document.querySelector('.jizhang-chart-fullscreen');
+      if (openChart) toggleChart(openChart);
+    }
+  };
+  document.addEventListener('click', handleUiClick);
+  document.addEventListener('keydown', handleUiKey);
+  window.jizhangUiClickHandler = handleUiClick;
+  window.jizhangUiKeyHandler = handleUiKey;
   const observer = new MutationObserver(() => {
     if (!pending) { pending = true; requestAnimationFrame(sync); }
   });
   observer.observe(document.head, {childList: true, subtree: true, characterData: true});
   const app = document.querySelector('.stApp');
-  if (app) observer.observe(app, {attributes: true, attributeFilter: ['class', 'style']});
+  if (app) {
+    observer.observe(app, {
+      childList: true,
+      subtree: true,
+    });
+  }
   window.jizhangThemeObserver = observer;
   requestAnimationFrame(sync);
+  requestAnimationFrame(readThemeChoice);
 })();
 </script>

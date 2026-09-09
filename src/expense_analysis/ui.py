@@ -48,6 +48,11 @@ PALETTE = (
     "#A39A78",
     "#8A928C",
 )
+PLOTLY_CONFIG = {
+    "displayModeBar": False,
+    "responsive": True,
+    "scrollZoom": False,
+}
 
 
 def _currency(value: float) -> str:
@@ -62,16 +67,39 @@ def _percent_delta(value: float | None) -> str | None:
 def _style_figure(figure: go.Figure, *, height: int = 380) -> go.Figure:
     figure.update_layout(
         height=height,
-        margin={"l": 8, "r": 8, "t": 16, "b": 8},
+        margin={"l": 24, "r": 24, "t": 24, "b": 28},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "IBM Plex Mono, monospace", "size": 11},
+        font={"family": "Departure Mono, monospace", "size": 12},
+        hoverlabel={"font": {"family": "Departure Mono, monospace", "size": 12}},
+        legend={"font": {"size": 12}},
         legend_title_text="",
         colorway=PALETTE,
+        hovermode="closest",
+        uniformtext_minsize=11,
+        uniformtext_mode="hide",
     )
-    figure.update_xaxes(showgrid=False)
-    figure.update_yaxes(gridcolor=GRID, zeroline=False)
+    figure.update_xaxes(showgrid=False, automargin=True, tickfont={"size": 11})
+    figure.update_yaxes(
+        gridcolor=GRID,
+        griddash="dot",
+        zeroline=False,
+        automargin=True,
+        tickfont={"size": 11},
+    )
+    figure.update_traces(
+        marker_pattern_shape=".",
+        marker_pattern_solidity=0.16,
+        marker_line_width=1,
+        marker_line_color=PRIMARY_DARK,
+        selector={"type": "bar"},
+    )
     return figure
+
+
+def _plotly_chart(figure: go.Figure, *, height: int = 380) -> None:
+    """Render every chart with the same sizing and interaction rules."""
+    st.plotly_chart(_style_figure(figure, height=height), width="stretch", config=PLOTLY_CONFIG)
 
 
 def _page_heading(kicker: str, title: str, description: str = "") -> None:
@@ -89,6 +117,30 @@ def _page_heading(kicker: str, title: str, description: str = "") -> None:
     )
 
 
+def _kpi_card_markup(
+    label: str,
+    value: str,
+    *,
+    detail: str = "",
+    change: float | None = None,
+    featured: bool = False,
+) -> str:
+    if change is None:
+        change_html = ""
+    else:
+        change_class = "calm" if change <= 0 else "attention"
+        arrow = "↓" if change < 0 else "↑" if change > 0 else "→"
+        change_html = f'<span class="kpi-change {change_class}">{arrow} {abs(change):.1f}%</span>'
+    card_class = "kpi-card featured" if featured else "kpi-card"
+    return f"""
+        <div class="{card_class}">
+            <div class="kpi-label">{html.escape(label)}</div>
+            <div class="kpi-value">{html.escape(value)}</div>
+            <div class="kpi-foot">{change_html}<span>{html.escape(detail)}</span></div>
+        </div>
+        """
+
+
 def _kpi_card(
     label: str,
     value: str,
@@ -97,21 +149,14 @@ def _kpi_card(
     change: float | None = None,
     featured: bool = False,
 ) -> None:
-    if change is None:
-        change_html = ""
-    else:
-        change_class = "calm" if change <= 0 else "attention"
-        arrow = "↓" if change < 0 else "↑" if change > 0 else "→"
-        change_html = f'<span class="kpi-change {change_class}">{arrow} {abs(change):.1f}%</span>'
-    card_class = "kpi-card featured" if featured else "kpi-card"
     st.html(
-        f"""
-        <div class="{card_class}">
-            <div class="kpi-label">{html.escape(label)}</div>
-            <div class="kpi-value">{html.escape(value)}</div>
-            <div class="kpi-foot">{change_html}<span>{html.escape(detail)}</span></div>
-        </div>
-        """
+        _kpi_card_markup(
+            label,
+            value,
+            detail=detail,
+            change=change,
+            featured=featured,
+        )
     )
 
 
@@ -129,7 +174,7 @@ def _transaction_list_markup(frame: pd.DataFrame, *, limit: int | None = None) -
     if limit:
         display = display.head(limit)
     rows: list[str] = []
-    for _, item in display.iterrows():
+    for item in display.to_dict("records"):
         transaction_type = str(item["transaction_type"])
         amount = float(item["amount"])
         if transaction_type == "expense":
@@ -203,11 +248,11 @@ def _render_empty_state() -> None:
 
 def _filtered_data(
     database: Database, config: AppConfig
-) -> tuple[list[dict[str, object]], pd.DataFrame]:
+) -> tuple[list[dict[str, object]], list[dict[str, object]], pd.DataFrame]:
     all_rows = database.list_transactions()
     all_frame = transactions_frame(all_rows, config)
     if all_frame.empty:
-        return all_rows, all_frame
+        return all_rows, all_rows, all_frame
 
     minimum = all_frame["transaction_date"].min().date()
     maximum = all_frame["transaction_date"].max().date()
@@ -234,6 +279,15 @@ def _filtered_data(
             placeholder="All types",
         )
         selected_accounts = st.multiselect("Accounts", account_options, placeholder="All accounts")
+    if (
+        start == minimum
+        and end == maximum
+        and not search.strip()
+        and not selected_categories
+        and not selected_types
+        and not selected_accounts
+    ):
+        return all_rows, all_rows, all_frame
     rows = database.list_transactions(
         start=start,
         end=end,
@@ -242,14 +296,17 @@ def _filtered_data(
         accounts=selected_accounts,
         search=search,
     )
-    return rows, transactions_frame(rows, config)
+    return all_rows, rows, transactions_frame(rows, config)
 
 
-def _render_dashboard(database: Database, frame: pd.DataFrame) -> None:
+def _render_dashboard(
+    database: Database,
+    frame: pd.DataFrame,
+    all_rows: list[dict[str, object]],
+) -> None:
     _page_heading(
         "OVERVIEW",
         "Overview",
-        "Spending, changes, and your current budget.",
     )
     if frame.empty:
         _render_empty_state()
@@ -263,38 +320,35 @@ def _render_dashboard(database: Database, frame: pd.DataFrame) -> None:
         budget_month = next(
             (
                 month
-                for month in calculate_plan(plan, database.list_transactions())["months"]
+                for month in calculate_plan(plan, all_rows)["months"]
                 if month["month"] == latest_month
             ),
             None,
         )
     budget_remaining = budget_month["remaining"] / 100 if budget_month else None
     period_detail = "Partial month" if metrics.is_partial else "Complete month"
-    card1, card2, card3, card4 = st.columns(4)
-    with card1:
-        _kpi_card(
+    st.html(
+        '<div class="kpi-grid">'
+        + _kpi_card_markup(
             "Personal spending",
             _currency(metrics.spending),
             detail=metrics.period_label,
             change=metrics.change_from_previous,
             featured=True,
         )
-    with card2:
-        _kpi_card(
+        + _kpi_card_markup(
             "Budget remaining",
             _currency(budget_remaining) if budget_remaining is not None else "Not set",
             detail=f"{latest_month} · full ledger, with rollover"
             if budget_remaining is not None
             else "Open Budgets to set or view your plan",
         )
-    with card3:
-        _kpi_card(
+        + _kpi_card_markup(
             "Compared with last month",
             _percent_delta(metrics.change_from_previous) or "No baseline",
             detail="Through the same day" if metrics.is_partial else "Full month",
         )
-    with card4:
-        _kpi_card(
+        + _kpi_card_markup(
             "Month-end outlook",
             (
                 _currency(metrics.projected_month_end)
@@ -303,6 +357,8 @@ def _render_dashboard(database: Database, frame: pd.DataFrame) -> None:
             ),
             detail=period_detail,
         )
+        + "</div>"
+    )
 
     monthly = monthly_spending(frame, personal_only=True)
     personal_frame = frame[frame["spending_class"].eq("Personal")]
@@ -352,12 +408,12 @@ def _render_dashboard(database: Database, frame: pd.DataFrame) -> None:
                 )
             )
             trend.update_yaxes(tickprefix="$", rangemode="tozero")
-            st.plotly_chart(_style_figure(trend, height=360), width="stretch")
+            _plotly_chart(trend, height=360)
 
     with right:
-        _section_heading("What changed", "The useful signals from this period")
+        _section_heading("What changed")
         insight_rows: list[str] = []
-        for _, driver in drivers.head(3).iterrows():
+        for driver in drivers.head(3).to_dict("records"):
             change = float(driver["change"])
             if change == 0:
                 continue
@@ -434,19 +490,17 @@ def _render_dashboard(database: Database, frame: pd.DataFrame) -> None:
             category_chart.update_layout(showlegend=False)
             category_chart.update_xaxes(visible=False)
             category_chart.update_yaxes(gridcolor="rgba(0,0,0,0)")
-            st.plotly_chart(_style_figure(category_chart, height=340), width="stretch")
+            _plotly_chart(category_chart, height=340)
 
     with right:
         _section_heading(
             f"Budget progress · {latest_month}",
-            "UCLA spending plan · unaffected by activity filters",
         )
         if budget_month is None:
             st.html(
                 """
                 <div class="soft-empty">
                     <strong>No spending plan for this month</strong>
-                    <span>Open Budgets to set up your UCLA target and committed costs.</span>
                 </div>
                 """
             )
@@ -504,7 +558,7 @@ def _render_dashboard(database: Database, frame: pd.DataFrame) -> None:
                     ],
                 )
                 comparison.update_yaxes(tickprefix="$")
-                st.plotly_chart(_style_figure(comparison, height=300), width="stretch")
+                _plotly_chart(comparison, height=300)
         with right:
             st.markdown("#### Fixed and personal spending")
             if not class_totals.empty:
@@ -524,7 +578,7 @@ def _render_dashboard(database: Database, frame: pd.DataFrame) -> None:
                 )
                 mix.update_yaxes(visible=False)
                 mix.update_xaxes(visible=False)
-                st.plotly_chart(_style_figure(mix, height=220), width="stretch")
+                _plotly_chart(mix, height=220)
 
 
 def _draft_from_editor(row: pd.Series) -> TransactionDraft:
@@ -890,7 +944,7 @@ def _render_insights(database: Database, frame: pd.DataFrame) -> None:
         )
         chart.update_layout(barmode="relative")
         chart.update_yaxes(tickprefix="$")
-        st.plotly_chart(_style_figure(chart), width="stretch")
+        _plotly_chart(chart)
 
     _section_heading("Academic-period comparison", "A dynamic view of spending across terms")
     academic = academic_period_spending(frame)
@@ -909,7 +963,7 @@ def _render_insights(database: Database, frame: pd.DataFrame) -> None:
             color_discrete_sequence=PALETTE,
         )
         academic_chart.update_yaxes(tickprefix="$")
-        st.plotly_chart(_style_figure(academic_chart), width="stretch")
+        _plotly_chart(academic_chart)
 
     duplicate_groups = database.duplicate_groups()
     if duplicate_groups:
@@ -999,17 +1053,8 @@ def render_app() -> None:
     database = _database()
     config = load_config()
 
-    st.html(
-        '<header class="masthead"><span class="wordmark" lang="zh-Hant">記帳</span>'
-        '<span class="local-pill">Local only</span></header>'
-    )
+    st.html('<header class="masthead"><span class="wordmark" lang="zh-Hant">記帳</span></header>')
 
-    with st.sidebar:
-        st.html(
-            """
-            <div class="nav-title">Navigation</div>
-            """
-        )
     page = st.sidebar.radio(
         "Navigate",
         [
@@ -1026,22 +1071,38 @@ def render_app() -> None:
     )
     st.sidebar.divider()
     with st.sidebar:
-        st.caption("Appearance: ⋮ → Light / Dark")
+        st.html(
+            """
+            <div class="theme-control">
+                <span class="theme-control-label">Appearance</span>
+                <div class="theme-options" role="radiogroup" aria-label="Appearance">
+                    <button type="button" role="radio" aria-checked="true"
+                        data-jizhang-theme-choice="System">System</button>
+                    <button type="button" role="radio" aria-checked="false"
+                        data-jizhang-theme-choice="Light">Light</button>
+                    <button type="button" role="radio" aria-checked="false"
+                        data-jizhang-theme-choice="Dark">Dark</button>
+                </div>
+            </div>
+            """
+        )
 
     if page == "Budgets":
         _render_budgets(database, config)
         return
+    if page == "Add transaction":
+        _render_add(database, config)
+        return
+    if page == "Settings":
+        _render_settings(database, config)
+        return
 
-    rows, frame = _filtered_data(database, config)
+    all_rows, rows, frame = _filtered_data(database, config)
     if page == "Overview":
-        _render_dashboard(database, frame)
+        _render_dashboard(database, frame, all_rows)
     elif page == "Transactions":
         _render_transactions(database, frame, config)
-    elif page == "Add transaction":
-        _render_add(database, config)
     elif page == "Import / Export":
         _render_import_export(database, rows, config)
     elif page == "Advanced insights":
         _render_insights(database, frame)
-    else:
-        _render_settings(database, config)

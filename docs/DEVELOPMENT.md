@@ -42,16 +42,20 @@ app.py
 
 Streamlit 1.60+ is required for paired native theme configuration and the trusted
 static theme bridge. `.streamlit/config.toml` defines native Light/Dark colors,
-square controls, a 14px base size, and locally hosted font faces. Users choose the
-theme in Streamlit's top-right main menu; do not add a second competing preference.
+square controls, a 14px base size, and locally hosted font faces. Users choose System,
+Light, or Dark from the sidebar Appearance control; the built-in top-right menu stays
+hidden.
 
 `assets/theme_bridge.html` observes the native app background and updates a single
-theme attribute for custom CSS panels. It runs only bundled static JavaScript:
-never interpolate transaction content, read storage, or issue network requests.
-The bridge disconnects its previous observer on reruns. Plotly uses transparent
-surfaces and inherits the native theme's text colors.
+theme attribute for custom CSS panels. The sidebar Appearance control selects the same
+native System/Light/Dark themes as Streamlit's built-in switcher, so it does not create
+a second theme state. The bridge also makes Plotly charts keyboard-focusable and
+toggles their local fullscreen class. It runs only bundled static JavaScript: never
+interpolate transaction content, read storage, or issue network requests. It disconnects
+its previous observers and listeners on reruns. Plotly uses transparent surfaces and
+inherits the native theme's text colors.
 
-The three families are IBM Plex Mono (UI), Anton (condensed amounts), and a
+The three families are Departure Mono (UI), Anton (condensed amounts), and a
 two-character Noto Sans TC subset (記帳 wordmark). Fonts and their OFL licenses live
 in `static/fonts/`. Static serving is enabled only for public visual assets:
 **never place databases, CSVs, configuration, or exports in `static/`.** Keep

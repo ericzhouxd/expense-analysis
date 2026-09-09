@@ -11,27 +11,22 @@ enableStaticServing = true
 toolbarMode = "viewer"
 
 [theme]
-font = "IBM Plex Mono, monospace"
-headingFont = "IBM Plex Mono, monospace"
-codeFont = "IBM Plex Mono, monospace"
+font = "Departure Mono, monospace"
+headingFont = "Departure Mono, monospace"
+codeFont = "Departure Mono, monospace"
 baseFontSize = 14
 baseRadius = "none"
 buttonRadius = "none"
 headingFontSizes = ["1.6rem", "1.1rem", "1rem"]
-headingFontWeights = [600, 600, 600]
+headingFontWeights = [400, 400, 400]
 metricValueFontSize = "1.9rem"
 showWidgetBorder = true
 showSidebarBorder = true
 
 [[theme.fontFaces]]
-family = "IBM Plex Mono"
-url = "app/static/fonts/IBMPlexMono-Regular.ttf"
+family = "Departure Mono"
+url = "app/static/fonts/DepartureMono-Regular.woff2"
 weight = 400
-
-[[theme.fontFaces]]
-family = "IBM Plex Mono"
-url = "app/static/fonts/IBMPlexMono-SemiBold.ttf"
-weight = 600
 
 [[theme.fontFaces]]
 family = "Anton"

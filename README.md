@@ -48,11 +48,11 @@ fields, unknown categories, category rules, and duplicate transactions.
 - Spending-driver, recurring-charge, and anomaly analysis
 - Cash-flow, savings-rate, and academic-period analysis
 - Sharp editorial/Y2K interface with brushed-metal and halftone textures
-- Light and dark themes, compact text, and locally bundled fonts
+- Light and dark themes with locally bundled Departure Mono interface typography
 
 ## Local commands
 
-Switch appearance through the top-right **⋮ → Light / Dark** controls.
+Switch appearance with **System / Light / Dark** at the bottom of the sidebar.
 After updating from the old design, restart Streamlit once to load the new theme
 configuration and local font serving.
 

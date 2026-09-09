@@ -37,11 +37,14 @@ class ImportPreview:
         return sum(row.duplicate for row in self.rows)
 
 
-def _value(row: dict[str, str], *names: str) -> str:
-    normalized = {key.casefold().strip(): (value or "") for key, value in row.items()}
+def _normalize_row(row: dict[str, str]) -> dict[str, str]:
+    return {key.casefold().strip(): (value or "").strip() for key, value in row.items()}
+
+
+def _value(normalized: dict[str, str], *names: str) -> str:
     for name in names:
         if name.casefold() in normalized:
-            return normalized[name.casefold()].strip()
+            return normalized[name.casefold()]
     return ""
 
 
@@ -60,34 +63,35 @@ def preview_csv(
     preview_rows: list[ImportRow] = []
 
     for row_number, row in enumerate(reader, start=2):
+        normalized = _normalize_row(row)
         errors: list[str] = []
-        description = _value(row, "description", "expense")
+        description = _value(normalized, "description", "expense")
         if description.startswith("---"):
             continue
         if not description:
             errors.append("Description is required")
 
         try:
-            transaction_date = parse_date(_value(row, "date", "transaction_date"))
+            transaction_date = parse_date(_value(normalized, "date", "transaction_date"))
         except ValueError as exc:
             errors.append(str(exc))
             transaction_date = None
 
         try:
-            signed_cents = parse_amount_cents(_value(row, "amount", "amount_dollars"))
+            signed_cents = parse_amount_cents(_value(normalized, "amount", "amount_dollars"))
             if signed_cents == 0:
                 errors.append("Amount must not be zero")
         except ValueError as exc:
             errors.append(str(exc))
             signed_cents = 0
 
-        transaction_type = _value(row, "type", "transaction_type").casefold()
+        transaction_type = _value(normalized, "type", "transaction_type").casefold()
         if not transaction_type:
             transaction_type = "refund" if signed_cents < 0 else "expense"
 
-        original_category = _value(row, "category")
-        notes = _value(row, "notes")
-        merchant = _value(row, "merchant")
+        original_category = _value(normalized, "category")
+        notes = _value(normalized, "notes")
+        merchant = _value(normalized, "merchant")
         category = config.category_for(description, merchant, original_category)
         if original_category and category == "Uncategorized":
             note = f"Imported category: {original_category}"
@@ -101,8 +105,8 @@ def preview_csv(
                     description=description,
                     amount_cents=abs(signed_cents),
                     category=category,
-                    account=_value(row, "account", "from", "source"),
-                    payment_method=_value(row, "payment_method", "method"),
+                    account=_value(normalized, "account", "from", "source"),
+                    payment_method=_value(normalized, "payment_method", "method"),
                     merchant=merchant,
                     transaction_type=transaction_type,
                     notes=notes,

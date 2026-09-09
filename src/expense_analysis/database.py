@@ -33,7 +33,6 @@ class Database:
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
         try:
             yield connection
             connection.commit()
@@ -46,6 +45,9 @@ class Database:
     def initialize(self) -> None:
         ensure_local_directories()
         with self.connect() as connection:
+            # WAL is persistent database state; configure it once during startup
+            # instead of issuing the pragma for every short-lived connection.
+            connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS transactions (

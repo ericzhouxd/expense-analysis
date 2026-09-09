@@ -16,15 +16,19 @@ interface.
 
 ### Appearance
 
-Use the top-right **⋮** menu's theme controls to select **Light**, **Dark**,
-or **System**. This controls the entire application, including charts,
-editable tables, forms, and textured panels. Restart the server once after upgrading
-from the earlier design so the new theme configuration and bundled fonts load.
+Use the **Appearance** control at the bottom of the sidebar to choose **System**,
+**Light**, or **Dark**. This controls the entire application, including charts, editable
+tables, forms, and textured panels. Restart the server once after upgrading from the
+earlier design so the new theme configuration and bundled fonts load.
 
 The interface uses square grids, brushed-metal headers, and dotted balance panels.
-Condensed numerals emphasize amounts; smaller monospace text handles labels and
-controls. All three font families are served locally. There are no remote font
-services, campus photos, or promotional slogans.
+Condensed numerals emphasize amounts; Departure Mono gives labels and controls a
+late-90s/early-00s interface character. Compact labels use tracked capitals while
+longer descriptions remain sentence case. All three font families are served locally.
+There are no remote font services, campus photos, or promotional slogans.
+
+Charts keep their controls out of the way. Click a chart to open it fullscreen, then
+click it again or press **Escape** to return to the page.
 
 ### Pages
 

@@ -51,6 +51,9 @@ def test_both_native_themes_and_three_local_font_families():
     root = Path(__file__).resolve().parents[1]
     config = tomllib.loads((root / ".streamlit/config.toml").read_text())
     theme = config["theme"]
+    assert theme["font"] == "Departure Mono, monospace"
+    assert theme["headingFont"] == "Departure Mono, monospace"
+    assert theme["codeFont"] == "Departure Mono, monospace"
     assert theme["light"]["backgroundColor"] != theme["dark"]["backgroundColor"]
     assert theme["baseRadius"] == "none"
     assert theme["baseFontSize"] == 14
@@ -58,5 +61,21 @@ def test_both_native_themes_and_three_local_font_families():
     for face in theme["fontFaces"]:
         assert face["url"].startswith("app/static/fonts/")
         assert (root / face["url"].removeprefix("app/")).is_file()
+    assert "IBM Plex Mono" not in (root / "src/expense_analysis/assets/theme.css").read_text()
     assert config["server"]["address"] == "127.0.0.1"
     assert config["browser"]["gatherUsageStats"] is False
+
+
+def test_theme_css_preserves_native_sidebar_and_readable_neon_controls():
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "src/expense_analysis/assets/theme.css").read_text()
+    bridge = (root / "src/expense_analysis/assets/theme_bridge.html").read_text()
+
+    assert "[data-testid='stSidebar'][aria-expanded='true']" not in css
+    assert "[data-testid='stExpandSidebarButton']" in css
+    assert "[data-testid='stBaseButton-primaryFormSubmit']" in css
+    assert "[aria-label^='Selected']" in css
+    assert "border-radius: 0 !important" in css
+    assert ".jizhang-chart-fullscreen" in css
+    assert "data-jizhang-theme-choice" in bridge
+    assert "stMainMenuItem-theme-${theme}" in bridge

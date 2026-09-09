@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import calendar
-import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -295,12 +294,6 @@ def spending_drivers(frame: pd.DataFrame, as_of: date | None = None) -> pd.DataF
     return result.sort_values("change", ascending=False)
 
 
-def _merchant_key(row: pd.Series) -> str:
-    source = str(row.get("merchant") or row.get("description") or "")
-    source = re.sub(r"\d+", "", source.casefold())
-    return " ".join(source.split())
-
-
 def recurring_transactions(frame: pd.DataFrame) -> pd.DataFrame:
     expenses = spending_frame(frame)
     columns = [
@@ -315,7 +308,12 @@ def recurring_transactions(frame: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=columns)
 
     working = expenses[expenses["transaction_type"].eq("expense")].copy()
-    working["merchant_key"] = working.apply(_merchant_key, axis=1)
+    merchant = working["merchant"].fillna("").astype(str).str.strip()
+    description = working["description"].fillna("").astype(str)
+    source = merchant.mask(merchant.eq(""), description)
+    working["merchant_key"] = (
+        source.str.casefold().str.replace(r"\d+", "", regex=True).str.split().str.join(" ")
+    )
     recurring: list[dict[str, object]] = []
     for merchant, group in working.groupby("merchant_key"):
         group = group.sort_values("transaction_date")

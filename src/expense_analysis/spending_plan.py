@@ -131,6 +131,7 @@ def calculate_plan(plan: SpendingPlan, transactions: list[dict]) -> dict:
         }
         for i, key in enumerate(keys)
     ]
+    months_by_key = dict(zip(keys, months, strict=True))
     obligations = []
     mapping = {}
     for cost in plan.commitments:
@@ -155,9 +156,9 @@ def calculate_plan(plan: SpendingPlan, transactions: list[dict]) -> dict:
         month_key = plan.allocations.get(
             transaction["id"], str(transaction["transaction_date"])[:7]
         )
-        if month_key not in keys:
+        month = months_by_key.get(month_key)
+        if month is None:
             continue
-        month = months[keys.index(month_key)]
         amount = int(transaction["amount_cents"]) * (-1 if kind == "refund" else 1)
         category = transaction["category"]
         obligation = mapping.get((category, month_key))

@@ -12,8 +12,8 @@ ASSETS = Path(__file__).parent / "assets"
 
 def inject_theme() -> None:
     st.html(ASSETS / "theme.css")
-    # Trusted, static code only. Tracks the native theme without reading data or
-    # changing Streamlit preferences. Never interpolate user content here.
+    # Trusted, static code only. Tracks and selects the native theme without
+    # reading app data. Never interpolate user content here.
     st.html(ASSETS / "theme_bridge.html", unsafe_allow_javascript=True)
 
 
