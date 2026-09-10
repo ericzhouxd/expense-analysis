@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import html
 import sqlite3
 from dataclasses import asdict
@@ -133,12 +132,11 @@ def _style_figure(figure: go.Figure, *, height: int = 380) -> go.Figure:
     return figure
 
 
-def _plotly_chart(figure: go.Figure, *, height: int = 380) -> None:
+def _plotly_chart(figure: go.Figure, *, key: str, height: int = 380) -> None:
     """Render every chart with the same sizing and interaction rules."""
     styled = _style_figure(figure, height=height)
-    chart_key = hashlib.sha256(styled.to_json().encode()).hexdigest()[:12]
     with st.container(
-        height=min(styled.layout.height + 4, 440), border=False, key=f"chart_panel_{chart_key}"
+        height=min(styled.layout.height + 4, 440), border=False, key=f"chart_panel_{key}"
     ):
         st.plotly_chart(styled, width="stretch", height=styled.layout.height, config=PLOTLY_CONFIG)
 
@@ -480,7 +478,7 @@ def _render_dashboard(
             )
             trend.update_yaxes(tickprefix="$", rangemode="tozero")
             trend.update_layout(hovermode="x unified")
-            _plotly_chart(trend, height=360)
+            _plotly_chart(trend, key="spending_trend", height=360)
 
     with right:
         _section_heading("What changed")
@@ -562,7 +560,7 @@ def _render_dashboard(
             category_chart.update_layout(showlegend=False)
             category_chart.update_xaxes(tickprefix="$", rangemode="tozero")
             category_chart.update_yaxes(gridcolor="rgba(0,0,0,0)")
-            _plotly_chart(category_chart, height=340)
+            _plotly_chart(category_chart, key="category_breakdown", height=340)
 
     with right:
         _section_heading(
@@ -630,7 +628,7 @@ def _render_dashboard(
                     ],
                 )
                 comparison.update_yaxes(tickprefix="$")
-                _plotly_chart(comparison, height=300)
+                _plotly_chart(comparison, key="period_comparison", height=300)
         with right:
             st.markdown("#### Fixed and personal spending")
             if not class_totals.empty:
@@ -650,7 +648,7 @@ def _render_dashboard(
                 )
                 mix.update_yaxes(visible=False)
                 mix.update_xaxes(visible=False)
-                _plotly_chart(mix, height=220)
+                _plotly_chart(mix, key="spending_mix", height=220)
 
 
 def _category_options(database: Database, config: AppConfig) -> list[str]:
@@ -1153,7 +1151,7 @@ def _render_insights(database: Database, frame: pd.DataFrame) -> None:
         )
         chart.update_layout(barmode="relative")
         chart.update_yaxes(tickprefix="$")
-        _plotly_chart(chart)
+        _plotly_chart(chart, key="cash_flow")
 
     _section_heading("Academic-period comparison", "A dynamic view of spending across terms")
     academic = academic_period_spending(frame)
@@ -1172,7 +1170,7 @@ def _render_insights(database: Database, frame: pd.DataFrame) -> None:
             color_discrete_sequence=PALETTE,
         )
         academic_chart.update_yaxes(tickprefix="$")
-        _plotly_chart(academic_chart)
+        _plotly_chart(academic_chart, key="academic_periods")
 
     duplicate_groups = database.duplicate_groups()
     if duplicate_groups:

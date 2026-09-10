@@ -12,6 +12,8 @@ from .config import DATABASE_PATH, ensure_local_directories
 from .models import TransactionDraft, new_transaction_id
 from .spending_plan import SpendingPlan
 
+CHOICE_COLUMNS = frozenset({"category", "account", "payment_method"})
+
 
 class DuplicateTransactionError(ValueError):
     """Raised when an identical transaction already exists."""
@@ -282,17 +284,23 @@ class Database:
             ).fetchone()
         return dict(row) if row else None
 
-    def list_transaction_categories(self) -> list[str]:
+    def list_choice_values(self, kind: str) -> list[str]:
+        """Return distinct saved values for an editable choice column."""
+        if kind not in CHOICE_COLUMNS:
+            raise ValueError("This field uses fixed choices")
         with self.connect() as connection:
             rows = connection.execute(
-                """
-                SELECT DISTINCT category
+                f"""
+                SELECT DISTINCT {kind}
                 FROM transactions
-                WHERE trim(category) != ''
-                ORDER BY category COLLATE NOCASE
+                WHERE trim({kind}) != ''
+                ORDER BY {kind} COLLATE NOCASE
                 """
             ).fetchall()
-        return [str(row["category"]) for row in rows]
+        return [str(row[kind]) for row in rows]
+
+    def list_transaction_categories(self) -> list[str]:
+        return self.list_choice_values("category")
 
     def existing_fingerprints(self) -> set[str]:
         with self.connect() as connection:

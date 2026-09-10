@@ -12,8 +12,15 @@ def choice_options(database: Database, config: AppConfig, kind: str) -> list[str
     }
     if kind not in defaults:
         raise ValueError("This field uses fixed choices")
-    # Keep custom values usable throughout the app, including imported values.
-    values = [*defaults[kind], *(str(row[kind]) for row in database.list_transactions())]
+    # Keep custom values usable throughout the app, including imported values. Prefer the
+    # database's DISTINCT query; fall back for proxies that only expose list_transactions().
+    reader = getattr(database, "list_choice_values", None)
+    saved = (
+        reader(kind)
+        if reader is not None
+        else [str(row[kind]) for row in database.list_transactions()]
+    )
+    values = [*defaults[kind], *saved]
     if kind == "category":
         plan = database.get_spending_plan()
         if plan:

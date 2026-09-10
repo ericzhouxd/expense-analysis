@@ -31,3 +31,30 @@ def test_saved_choices_are_shared_and_deduplicated(tmp_path):
     assert "" not in choice_options(database, config, "account")
     with pytest.raises(ValueError, match="fixed choices"):
         choice_options(database, config, "transaction_type")
+
+
+def test_choice_options_fall_back_for_proxies_without_a_distinct_query(tmp_path):
+    class Proxy:
+        def __init__(self, database):
+            self._database = database
+
+        def list_transactions(self):
+            return self._database.list_transactions()
+
+        def get_spending_plan(self):
+            return self._database.get_spending_plan()
+
+    database = Database(tmp_path / "proxy.sqlite3")
+    database.initialize()
+    database.add_transaction(
+        TransactionDraft(
+            date(2026, 9, 10),
+            "Synthetic entry",
+            1000,
+            "Food",
+            account="Travel wallet",
+            payment_method="Gift card",
+        )
+    )
+    options = choice_options(Proxy(database), AppConfig(), "account")
+    assert "Travel wallet" in options

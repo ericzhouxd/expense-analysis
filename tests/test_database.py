@@ -25,6 +25,24 @@ def draft():
     )
 
 
+def test_list_choice_values_returns_sorted_distinct_saved_values(database):
+    for index, category in enumerate(("Travel", "Food", "Travel")):
+        database.add_transaction(
+            TransactionDraft(
+                date(2026, 7, 30),
+                f"Synthetic {index}",
+                100,
+                category,
+                account="Checking",
+                payment_method="Card",
+            )
+        )
+    assert database.list_choice_values("category") == ["Food", "Travel"]
+    assert database.list_choice_values("account") == ["Checking"]
+    with pytest.raises(ValueError, match="fixed choices"):
+        database.list_choice_values("transaction_type")
+
+
 def test_add_update_and_delete_transaction(database, draft):
     transaction_id = database.add_transaction(draft)
     assert database.get_transaction(transaction_id)["description"] == "Groceries"
