@@ -27,6 +27,8 @@ app.py
 - `app.py` is the Streamlit entry point.
 - `ui.py` renders pages and translates UI actions into database operations.
 - `database.py` owns SQLite schema creation and persistence.
+- `transaction_edits.py` validates table edits and saves reviewed batches in one
+  SQLite transaction, checking duplicates and changes since the editor snapshot.
 - `models.py` validates dates, amounts, transaction types, IDs, and fingerprints.
 - `import_export.py` previews and normalizes CSV data.
 - `analytics.py` converts database rows into Pandas frames and calculates insights.
@@ -54,6 +56,16 @@ toggles their local fullscreen class. It runs only bundled static JavaScript: ne
 interpolate transaction content, read storage, or issue network requests. It disconnects
 its previous observers and listeners on reruns. Plotly uses transparent surfaces and
 inherits the native theme's text colors.
+
+`assets/choice_bridge.html` confirms creation in native React Aria single selects,
+Base Web multiselects, and Glide table choice editors. It reads the active input
+locally and renders prompt text with `textContent`; it never sends or stores input.
+Window capture listeners run before form Enter navigation, and are cleaned up on
+reruns. Check Enter, Escape, mouse selection, partial matches, and both themes after
+Streamlit upgrades. `choices.py` shares configured and saved vocabulary. Editable
+table fields use creatable multiselect columns; transaction validation enforces one
+value per field, while budget bills may map multiple categories. Calculation enums
+(transaction type, billing cycle, and reference presets) keep fixed choices.
 
 The three families are Departure Mono (UI), Anton (condensed amounts), and a
 two-character Noto Sans TC subset (記帳 wordmark). Fonts and their OFL licenses live

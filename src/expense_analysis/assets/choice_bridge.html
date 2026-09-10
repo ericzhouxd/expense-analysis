@@ -1,0 +1,163 @@
+<script>
+// Confirm creation locally before allowing the native widget to accept a new value.
+(() => {
+  window.jizhangChoiceCleanup?.();
+  let pending = null;
+  let accepting = false;
+  let swallowKeyUp = false;
+  const isCreation = (option) => {
+    if (!option) return false;
+    if (option.dataset.key !== undefined) return option.dataset.key === '__creatable__';
+    const value = activeInput()?.value;
+    return value && [`Add: ${value}`, `Create "${value}"`].includes(option.textContent.trim());
+  };
+  const activeInput = () => {
+    const active = document.activeElement;
+    return active?.matches('input[role="combobox"], .gdg-multi-select input') ? active : null;
+  };
+  const candidateFor = (input) => {
+    if (!input?.value.trim()) return null;
+    // Base Web's virtualized multiselect omits the referenced listbox id.
+    const list = document.getElementById(input.getAttribute('aria-controls')) ||
+      (input.closest('[data-testid="stMultiSelect"]') && document);
+    if (!list) return null;
+    const highlighted = document.getElementById(input.getAttribute('aria-activedescendant')) ||
+      (list === document && document.querySelector('[role="option"][aria-selected="true"]'));
+    // Streamlit's single select creates typed values on Enter even with partial matches.
+    const option = highlighted || (input.closest('[data-testid="stSelectbox"]') &&
+      list.querySelector('[data-key="__creatable__"]')) || list.querySelector('[role="option"]');
+    return isCreation(option) ? option : null;
+  };
+  const removePrompt = () => {
+    pending?.panel.remove();
+    pending = null;
+  };
+  const cancel = () => {
+    const input = pending?.input;
+    removePrompt();
+    if (input?.isConnected) {
+      if (!input.closest('[data-testid="stSelectbox"]')) {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '');
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+      }
+      // Native blur restores the committed selection; Escape can clear optional fields.
+      input.blur();
+      requestAnimationFrame(() => { if (input.isConnected) input.focus(); });
+    }
+  };
+  const accept = () => {
+    if (!pending) return;
+    const {option, input} = pending;
+    removePrompt();
+    accepting = true;
+    try {
+      if (option.isConnected && input.isConnected) {
+        input.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true,
+        }));
+      }
+    } finally {
+      accepting = false;
+    }
+  };
+  const ask = (input, option) => {
+    if (pending || !input || !option) return;
+    const cell = input.closest('.gdg-multi-select') &&
+      document.querySelector('[role="gridcell"][aria-selected="true"]');
+    const column = cell && [...(cell.closest('table')?.querySelectorAll('[role="columnheader"]') || [])]
+      .find(header => header.getAttribute('aria-colindex') === cell.getAttribute('aria-colindex'));
+    const label = column?.textContent.trim() || input.getAttribute('aria-label') ||
+      option.closest('[role="listbox"]')?.getAttribute('aria-label') || 'category';
+    const kind = ({Categories: 'category', Accounts: 'account'})[label] || label.toLowerCase();
+    const panel = document.createElement('div');
+    panel.className = 'choice-confirmation';
+    panel.setAttribute('role', 'alertdialog');
+    panel.setAttribute('data-react-aria-top-layer', 'true');
+    panel.setAttribute('aria-live', 'assertive');
+    panel.setAttribute('aria-label', 'Confirm new ' + kind);
+    const message = document.createElement('p');
+    message.textContent = `Add new ${kind} “${input.value.trim()}”?`;
+    panel.append(message);
+    const actions = document.createElement('div');
+    actions.className = 'choice-confirmation-actions';
+    for (const [text, handler] of [['Enter to add', accept], ['Esc to cancel', cancel]]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = text;
+      button.addEventListener('mousedown', event => event.preventDefault());
+      button.addEventListener('click', handler);
+      actions.append(button);
+    }
+    panel.append(actions);
+    document.body.append(panel);
+    const rect = input.closest('[role="group"], [data-baseweb="select"], .gdg-multi-select')
+      ?.getBoundingClientRect() || input.getBoundingClientRect();
+    panel.style.width = `${Math.min(Math.max(rect.width, 280), window.innerWidth - 24)}px`;
+    panel.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - panel.offsetWidth - 12))}px`;
+    panel.style.top = `${Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - panel.offsetHeight - 12))}px`;
+    pending = {input, option, panel};
+  };
+  const onKeyDown = (event) => {
+    if (accepting || event.isComposing) return;
+    if (pending) {
+      if (event.key === 'Enter' || event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        swallowKeyUp = true;
+        if (!event.repeat) event.key === 'Enter' ? accept() : cancel();
+      } else if (event.key === 'Tab') {
+        // React Select otherwise creates the focused option when tabbing away.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        cancel();
+      } else if (!event.ctrlKey && !event.metaKey) {
+        removePrompt();
+      }
+      return;
+    }
+    if (event.key !== 'Enter' && event.key !== 'Tab') return;
+    const input = activeInput();
+    const option = candidateFor(input);
+    if (!option) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    swallowKeyUp = event.key === 'Enter';
+    if (!event.repeat) ask(input, option);
+  };
+  const onKeyUp = (event) => {
+    if (swallowKeyUp && (event.key === 'Enter' || event.key === 'Escape')) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      swallowKeyUp = false;
+    }
+  };
+  const onPointer = (event) => {
+    if (accepting) return;
+    if (pending?.panel.contains(event.target)) return;
+    const option = event.target.closest?.('[role="option"]');
+    if (isCreation(option)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      ask(activeInput(), option);
+    } else if (pending) {
+      removePrompt();
+    }
+  };
+  const observer = new MutationObserver(() => {
+    if (pending && !pending.input.isConnected) removePrompt();
+  });
+  observer.observe(document.body, {childList: true, subtree: true});
+  window.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('keyup', onKeyUp, true);
+  window.addEventListener('pointerdown', onPointer, true);
+  window.addEventListener('click', onPointer, true);
+  window.jizhangChoiceCleanup = () => {
+    removePrompt();
+    observer.disconnect();
+    window.removeEventListener('keydown', onKeyDown, true);
+    window.removeEventListener('keyup', onKeyUp, true);
+    window.removeEventListener('pointerdown', onPointer, true);
+    window.removeEventListener('click', onPointer, true);
+  };
+})();
+</script>

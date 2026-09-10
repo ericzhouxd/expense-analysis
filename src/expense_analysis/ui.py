@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import html
+import sqlite3
+from dataclasses import asdict
 from datetime import date
 
 import pandas as pd
@@ -22,12 +24,14 @@ from .analytics import (
     transactions_frame,
 )
 from .budget_ui import render_budget_page
+from .choices import choice_options
 from .config import DATABASE_PATH, AppConfig, load_config
 from .database import Database, DuplicateTransactionError
 from .import_export import ImportPreview, export_csv, preview_csv
 from .models import TransactionDraft, parse_amount_cents
 from .presentation import inject_theme
 from .spending_plan import calculate_plan
+from .transaction_edits import TransactionChange, apply_changes, collect_changes
 
 PRIMARY = "#859A19"
 PRIMARY_DARK = "#657900"
@@ -65,41 +69,76 @@ def _percent_delta(value: float | None) -> str | None:
 
 
 def _style_figure(figure: go.Figure, *, height: int = 380) -> go.Figure:
+    horizontal = [
+        trace for trace in figure.data if trace.type == "bar" and trace.orientation == "h"
+    ]
+    category_count = len({str(label) for trace in horizontal for label in trace.y})
+    height = max(height, 100 + 36 * category_count) if horizontal else height
+    has_legend = len(figure.data) > 1 and figure.layout.showlegend is not False
     figure.update_layout(
         height=height,
-        margin={"l": 24, "r": 24, "t": 24, "b": 28},
+        margin={"l": 16, "r": 56 if horizontal else 24, "t": 28, "b": 78 if has_legend else 44},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font={"family": "Departure Mono, monospace", "size": 12},
         hoverlabel={"font": {"family": "Departure Mono, monospace", "size": 12}},
-        legend={"font": {"size": 12}},
+        legend={
+            "font": {"size": 11},
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.22,
+            "x": 0,
+        },
         legend_title_text="",
         colorway=PALETTE,
-        hovermode="closest",
+        hovermode=figure.layout.hovermode or "closest",
         uniformtext_minsize=11,
         uniformtext_mode="hide",
+        bargap=0.28,
+        bargroupgap=0.08,
+        showlegend=has_legend,
     )
-    figure.update_xaxes(showgrid=False, automargin=True, tickfont={"size": 11})
+    figure.update_xaxes(
+        showgrid=bool(horizontal),
+        gridcolor=GRID,
+        griddash="dot",
+        automargin=True,
+        tickfont={"size": 11},
+        title_text=None,
+    )
     figure.update_yaxes(
         gridcolor=GRID,
         griddash="dot",
         zeroline=False,
         automargin=True,
         tickfont={"size": 11},
+        showgrid=not bool(horizontal),
+        title_text=None,
     )
     figure.update_traces(
         marker_pattern_shape=".",
-        marker_pattern_solidity=0.16,
+        marker_pattern_solidity=0.10,
         marker_line_width=1,
         marker_line_color=PRIMARY_DARK,
         selector={"type": "bar"},
     )
+    bar_index = 0
+    for trace in figure.data:
+        if trace.type == "bar":
+            trace.marker.pattern.shape = (".", "/", "", "\\")[bar_index % 4]
+            bar_index += 1
+        elif trace.type == "scatter" and "markers" in (trace.mode or ""):
+            trace.marker.update(size=7, symbol="square", line={"width": 1, "color": PRIMARY_DARK})
     return figure
 
 
-def _plotly_chart(figure: go.Figure, *, height: int = 380) -> None:
+def _plotly_chart(figure: go.Figure, *, key: str, height: int = 380) -> None:
     """Render every chart with the same sizing and interaction rules."""
-    st.plotly_chart(_style_figure(figure, height=height), width="stretch", config=PLOTLY_CONFIG)
+    styled = _style_figure(figure, height=height)
+    with st.container(
+        height=min(styled.layout.height + 4, 440), border=False, key=f"chart_panel_{key}"
+    ):
+        st.plotly_chart(styled, width="stretch", height=styled.layout.height, config=PLOTLY_CONFIG)
 
 
 def _page_heading(kicker: str, title: str, description: str = "") -> None:
@@ -284,8 +323,8 @@ def _filtered_data(
 
     minimum = all_frame["transaction_date"].min().date()
     maximum = all_frame["transaction_date"].max().date()
-    category_options = sorted(all_frame["category"].dropna().unique())
-    account_options = sorted(value for value in all_frame["account"].dropna().unique() if value)
+    category_options = choice_options(database, config, "category")
+    account_options = choice_options(database, config, "account")
     with st.sidebar.expander("Filter activity", expanded=False):
         selected_range = st.date_input(
             "Date range",
@@ -299,14 +338,16 @@ def _filtered_data(
             start, end = minimum, maximum
         search = st.text_input("Search", placeholder="Description, merchant, notes…")
         selected_categories = st.multiselect(
-            "Categories", category_options, placeholder="All categories"
+            "Categories", category_options, placeholder="All categories", accept_new_options=True
         )
         selected_types = st.multiselect(
             "Transaction types",
             ["expense", "refund", "income", "transfer"],
             placeholder="All types",
         )
-        selected_accounts = st.multiselect("Accounts", account_options, placeholder="All accounts")
+        selected_accounts = st.multiselect(
+            "Accounts", account_options, placeholder="All accounts", accept_new_options=True
+        )
     if (
         start == minimum
         and end == maximum
@@ -418,10 +459,10 @@ def _render_dashboard(
                     y=monthly["spending"],
                     name="Monthly spending",
                     mode="lines+markers",
-                    line={"color": PRIMARY, "width": 2.5, "shape": "spline"},
+                    line={"color": PRIMARY, "width": 2.5, "shape": "linear"},
                     marker={"size": 7, "color": PRIMARY, "line": {"width": 2, "color": "white"}},
                     fill="tozeroy",
-                    fillcolor="rgba(61, 107, 87, 0.08)",
+                    fillcolor=MINT,
                     hovertemplate="%{x|%b %Y}<br>$%{y:,.2f}<extra></extra>",
                 )
             )
@@ -436,7 +477,8 @@ def _render_dashboard(
                 )
             )
             trend.update_yaxes(tickprefix="$", rangemode="tozero")
-            _plotly_chart(trend, height=360)
+            trend.update_layout(hovermode="x unified")
+            _plotly_chart(trend, key="spending_trend", height=360)
 
     with right:
         _section_heading("What changed")
@@ -501,7 +543,7 @@ def _render_dashboard(
             st.info("No personal expenses in the selected range.")
         else:
             category_chart = px.bar(
-                categories.head(8).sort_values("spending"),
+                categories.sort_values("spending"),
                 x="spending",
                 y="category",
                 orientation="h",
@@ -509,16 +551,16 @@ def _render_dashboard(
                 labels={"spending": "Spending", "category": ""},
             )
             category_chart.update_traces(
-                marker_color=PRIMARY,
+                marker_color=[SAGE] * (len(categories) - 1) + [PRIMARY],
                 marker_line_width=0,
                 hovertemplate="<b>%{y}</b><br>$%{x:,.2f}<extra></extra>",
                 textposition="outside",
                 cliponaxis=False,
             )
             category_chart.update_layout(showlegend=False)
-            category_chart.update_xaxes(visible=False)
+            category_chart.update_xaxes(tickprefix="$", rangemode="tozero")
             category_chart.update_yaxes(gridcolor="rgba(0,0,0,0)")
-            _plotly_chart(category_chart, height=340)
+            _plotly_chart(category_chart, key="category_breakdown", height=340)
 
     with right:
         _section_heading(
@@ -586,7 +628,7 @@ def _render_dashboard(
                     ],
                 )
                 comparison.update_yaxes(tickprefix="$")
-                _plotly_chart(comparison, height=300)
+                _plotly_chart(comparison, key="period_comparison", height=300)
         with right:
             st.markdown("#### Fixed and personal spending")
             if not class_totals.empty:
@@ -606,34 +648,11 @@ def _render_dashboard(
                 )
                 mix.update_yaxes(visible=False)
                 mix.update_xaxes(visible=False)
-                _plotly_chart(mix, height=220)
-
-
-def _draft_from_editor(row: pd.Series) -> TransactionDraft:
-    return TransactionDraft(
-        transaction_date=pd.Timestamp(row["Date"]).date(),
-        description=str(row["Description"]),
-        amount_cents=abs(parse_amount_cents(row["Amount"])),
-        category=str(row["Category"]),
-        account=str(row["Account"]),
-        payment_method=str(row["Payment method"]),
-        merchant=str(row["Merchant"]),
-        transaction_type=str(row["Type"]),
-        notes=str(row["Notes"]),
-    )
+                _plotly_chart(mix, key="spending_mix", height=220)
 
 
 def _category_options(database: Database, config: AppConfig) -> list[str]:
-    category_reader = getattr(database, "list_transaction_categories", None)
-    if category_reader is not None:
-        saved_categories = category_reader()
-    else:
-        saved_categories = [
-            str(row["category"])
-            for row in database.list_transactions()
-            if str(row.get("category", "")).strip()
-        ]
-    return list(dict.fromkeys((*config.categories, *saved_categories)))
+    return choice_options(database, config, "category")
 
 
 def _get_transaction(database: Database, transaction_id: str) -> dict[str, object] | None:
@@ -646,18 +665,57 @@ def _get_transaction(database: Database, transaction_id: str) -> dict[str, objec
     )
 
 
-@st.dialog("Delete marked transactions?")
-def _confirm_delete(database: Database, transaction_ids: list[str]) -> None:
-    count = len(transaction_ids)
-    st.write(
-        f"This will permanently delete {count} transaction"
-        f"{'s' if count != 1 else ''} from the local database."
+def _reset_transaction_editor() -> None:
+    st.session_state.pop("transaction_editor_baseline", None)
+    st.session_state["transaction_editor_generation"] = (
+        st.session_state.get("transaction_editor_generation", 0) + 1
     )
-    st.caption("Close this dialog to keep them.")
-    if st.button("Delete permanently", type="primary"):
-        deleted = database.delete_transactions(transaction_ids)
-        st.toast(f"Deleted {deleted} transaction(s).")
-        st.rerun()
+
+
+@st.dialog("Review transaction changes", width="large")
+def _review_transaction_changes(database: Database, changes: list[TransactionChange]) -> None:
+    deletions = sum(change.after is None for change in changes)
+    st.write(f"{len(changes) - deletions} transaction(s) edited · {deletions} marked for deletion")
+    preview = []
+    for change in changes:
+        if change.after is None:
+            preview.append(
+                {
+                    "Transaction": change.before.description,
+                    "Field": "Delete transaction",
+                    "Before": f"{change.before.transaction_date} · "
+                    f"{_currency(change.before.amount_cents / 100)}",
+                    "After": "Permanently deleted",
+                }
+            )
+            continue
+        for field, before in asdict(change.before).items():
+            after = getattr(change.after, field)
+            if before != after:
+                preview.append(
+                    {
+                        "Transaction": change.before.description,
+                        "Field": field.replace("_", " ").replace("amount cents", "amount").title(),
+                        "Before": _currency(before / 100)
+                        if field == "amount_cents"
+                        else str(before),
+                        "After": _currency(after / 100) if field == "amount_cents" else str(after),
+                    }
+                )
+    st.dataframe(pd.DataFrame(preview), hide_index=True, width="stretch")
+    st.caption("Close this review to keep editing. Nothing is saved until you confirm.")
+    confirmed = not deletions or st.checkbox("I understand that these deletions are permanent.")
+    if st.button("Confirm changes", type="primary", disabled=not confirmed):
+        try:
+            apply_changes(database, changes)
+        except ValueError as exc:
+            st.error(str(exc))
+        except sqlite3.Error:
+            st.error("Nothing was saved. The database could not complete the changes. Try again.")
+        else:
+            _reset_transaction_editor()
+            st.session_state["transaction_editor_saved"] = len(changes)
+            st.rerun()
 
 
 def _render_transactions(database: Database, frame: pd.DataFrame, config: AppConfig) -> None:
@@ -727,7 +785,9 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
         _transaction_list(frame, focused_transaction_id=focused_transaction_id)
         return
 
-    st.caption("Edit fields directly. Marking a row deletes it when you save.")
+    if saved_count := st.session_state.pop("transaction_editor_saved", None):
+        st.success(f"Saved changes to {saved_count} transaction(s).")
+    st.caption("Edit cells, then review the changes. Deletions require explicit confirmation.")
     editor_frame = pd.DataFrame(
         {
             "Delete": False,
@@ -743,8 +803,22 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
             "Notes": frame["notes"],
         }
     )
+    baseline = st.session_state.get("transaction_editor_baseline")
+    if baseline is None or tuple(baseline["ID"]) != tuple(editor_frame["ID"]):
+        _reset_transaction_editor()
+        st.session_state["transaction_editor_baseline"] = editor_frame.copy(deep=True)
+    editor_frame = st.session_state["transaction_editor_baseline"]
+    choice_columns = {
+        "Category": "category",
+        "Account": "account",
+        "Payment method": "payment_method",
+    }
+    display_frame = editor_frame.copy(deep=True)
+    for column in choice_columns:
+        display_frame[column] = display_frame[column].map(lambda value: [value] if value else [])
+    st.caption("Category, account and payment method: remove the current choice to replace it.")
     edited = st.data_editor(
-        editor_frame,
+        display_frame,
         hide_index=True,
         width="stretch",
         height=520,
@@ -752,37 +826,42 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
         column_config={
             "Delete": st.column_config.CheckboxColumn("Delete"),
             "ID": None,
+            "Description": st.column_config.TextColumn("Description", required=True),
             "Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD", required=True),
             "Amount": st.column_config.NumberColumn(
                 "Amount", min_value=0.01, step=0.01, format="$%.2f", required=True
             ),
-            "Category": st.column_config.SelectboxColumn(
-                "Category", options=_category_options(database, config), required=True
-            ),
+            **{
+                column: st.column_config.MultiselectColumn(
+                    column,
+                    options=choice_options(database, config, kind),
+                    accept_new_options=True,
+                    required=column == "Category",
+                    help="Choose one value. Type a new value and press Enter to confirm it.",
+                )
+                for column, kind in choice_columns.items()
+            },
             "Type": st.column_config.SelectboxColumn(
                 "Type",
                 options=["expense", "refund", "income", "transfer"],
                 required=True,
             ),
         },
-        key="transaction_editor",
+        key=f"transaction_editor_{st.session_state.get('transaction_editor_generation', 0)}",
     )
-    delete_ids = edited.loc[edited["Delete"], "ID"].astype(str).tolist()
-    save_column, delete_column, _ = st.columns((1, 1, 4))
-    if save_column.button("Save edits", type="primary"):
-        try:
-            for _, row in edited.iterrows():
-                database.update_transaction(str(row["ID"]), _draft_from_editor(row))
-        except ValueError as exc:
-            st.error(str(exc))
-        else:
-            st.toast("Changes saved.")
-            st.rerun()
-    if delete_column.button(
-        f"Delete marked ({len(delete_ids)})",
-        disabled=not delete_ids,
+    changes = []
+    try:
+        changes = collect_changes(display_frame, edited)
+    except ValueError as exc:
+        st.error(str(exc))
+    review_column, discard_column = st.columns(2)
+    if review_column.button(
+        f"Review changes ({len(changes)})", type="primary", disabled=not changes
     ):
-        _confirm_delete(database, delete_ids)
+        _review_transaction_changes(database, changes)
+    if discard_column.button("Discard edits / reload"):
+        _reset_transaction_editor()
+        st.rerun()
 
 
 @st.dialog("Add a transaction", width="large")
@@ -825,23 +904,25 @@ def _add_transaction_dialog(database: Database, config: AppConfig) -> None:
         left, right = st.columns(2)
         account = left.selectbox(
             "Account",
-            config.accounts,
+            choice_options(database, config, "account"),
             index=(
                 config.accounts.index(config.default_account)
                 if config.default_account in config.accounts
                 else 0
             ),
             key="add_transaction_account",
+            accept_new_options=True,
         )
         payment_method = right.selectbox(
             "Payment method",
-            config.payment_methods,
+            choice_options(database, config, "payment_method"),
             index=(
                 config.payment_methods.index(config.default_payment_method)
                 if config.default_payment_method in config.payment_methods
                 else 0
             ),
             key="add_transaction_payment_method",
+            accept_new_options=True,
         )
         notes = st.text_area("Notes", height=80, key="add_transaction_notes")
         submitted = st.form_submit_button(
@@ -1068,11 +1149,11 @@ def _render_insights(database: Database, frame: pd.DataFrame) -> None:
             y=cash_flow["net_cash_flow"],
             name="Net cash flow",
             mode="lines+markers",
-            line={"color": PRIMARY_DARK, "width": 2.5},
+            line={"color": GOLD, "width": 2.5},
         )
         chart.update_layout(barmode="relative")
         chart.update_yaxes(tickprefix="$")
-        _plotly_chart(chart)
+        _plotly_chart(chart, key="cash_flow")
 
     _section_heading("Academic-period comparison", "A dynamic view of spending across terms")
     academic = academic_period_spending(frame)
@@ -1091,7 +1172,7 @@ def _render_insights(database: Database, frame: pd.DataFrame) -> None:
             color_discrete_sequence=PALETTE,
         )
         academic_chart.update_yaxes(tickprefix="$")
-        _plotly_chart(academic_chart)
+        _plotly_chart(academic_chart, key="academic_periods")
 
     duplicate_groups = database.duplicate_groups()
     if duplicate_groups:

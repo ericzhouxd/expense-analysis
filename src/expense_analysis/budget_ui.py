@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 import pandas as pd
 import streamlit as st
 
+from .choices import choice_options
 from .config import AppConfig
 from .database import Database
 from .presentation import budget_hero_markup, usage_markup
@@ -41,7 +42,7 @@ def _default_costs(benchmark: dict) -> list[dict]:
             "Cycle": "Coverage total",
             "First month": 1,
             "Months": 9,
-            "Categories": "Tuition",
+            "Categories": ["Tuition"],
         },
         {
             "Bill": "Campus fees",
@@ -49,7 +50,7 @@ def _default_costs(benchmark: dict) -> list[dict]:
             "Cycle": "Coverage total",
             "First month": 1,
             "Months": 9,
-            "Categories": "School Fees",
+            "Categories": ["School Fees"],
         },
         {
             "Bill": "Rent / housing + meal plan",
@@ -57,7 +58,7 @@ def _default_costs(benchmark: dict) -> list[dict]:
             "Cycle": "Monthly",
             "First month": 1,
             "Months": 9,
-            "Categories": "Rent, Housing and Meal Plan",
+            "Categories": ["Rent", "Housing and Meal Plan"],
         },
         {
             "Bill": "Utilities",
@@ -65,7 +66,7 @@ def _default_costs(benchmark: dict) -> list[dict]:
             "Cycle": "Monthly",
             "First month": 1,
             "Months": 9,
-            "Categories": "Utilities",
+            "Categories": ["Utilities"],
         },
         {
             "Bill": "Internet",
@@ -73,7 +74,7 @@ def _default_costs(benchmark: dict) -> list[dict]:
             "Cycle": "Monthly",
             "First month": 1,
             "Months": 9,
-            "Categories": "Internet",
+            "Categories": ["Internet"],
         },
         {
             "Bill": "Health insurance",
@@ -81,12 +82,12 @@ def _default_costs(benchmark: dict) -> list[dict]:
             "Cycle": "Coverage total",
             "First month": 1,
             "Months": 9,
-            "Categories": "Insurance",
+            "Categories": ["Insurance"],
         },
     ]
 
 
-def _setup(database: Database, plan: SpendingPlan | None) -> None:
+def _setup(database: Database, plan: SpendingPlan | None, config: AppConfig) -> None:
     st.subheader("Make the plan yours")
     st.caption(
         "UCLA undergraduate estimates are a starting point, not a bill or available cash. "
@@ -121,7 +122,7 @@ def _setup(database: Database, plan: SpendingPlan | None) -> None:
                 "Cycle": cost.cadence,
                 "First month": cost.first_month + 1,
                 "Months": cost.months,
-                "Categories": ", ".join(cost.categories),
+                "Categories": list(cost.categories),
             }
             for cost in plan.commitments
         ]
@@ -197,15 +198,17 @@ def _setup(database: Database, plan: SpendingPlan | None) -> None:
                     min_value=1, max_value=12, step=1, required=True
                 ),
                 "Bill": st.column_config.TextColumn(required=True),
-                "Categories": st.column_config.TextColumn(
-                    help="Exact, comma-separated transaction categories"
+                "Categories": st.column_config.MultiselectColumn(
+                    options=choice_options(database, config, "category"),
+                    accept_new_options=True,
+                    help="Choose categories, or type a new category and confirm with Enter.",
                 ),
             },
         )
         st.caption(
             "Each category can match only one bill in a given month. A combined housing/meal-plan "
             "charge should be reserved once. Unmatched expenses—including uncategorized ones—"
-            "always count as everyday spending. Create additional categories in config.toml."
+            "always count as everyday spending. Type a new category and press Enter to confirm it."
         )
         confirmed = st.checkbox(
             "I checked my residency, tuition, rent, utilities, insurance and summer coverage. "
@@ -226,7 +229,9 @@ def _setup(database: Database, plan: SpendingPlan | None) -> None:
                     months=int(row["Months"]),
                     categories=tuple(
                         item.strip()
-                        for item in str(row["Categories"] or "").split(",")
+                        for item in (
+                            row["Categories"] if isinstance(row["Categories"], list) else []
+                        )
                         if item.strip()
                     ),
                 )
@@ -295,7 +300,7 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
     if st.session_state.pop("plan_saved", False):
         st.success("Spending plan saved locally.")
     if plan is None:
-        _setup(database, None)
+        _setup(database, None, config)
         return
     rows = database.list_transactions()  # Deliberately independent of sidebar filters.
     result = calculate_plan(plan, rows)
@@ -501,7 +506,7 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
         else:
             st.caption("No recorded expenses or refunds allocated to this period.")
     with st.expander("Edit plan & committed costs"):
-        _setup(database, plan)
+        _setup(database, plan, config)
     with st.expander("How this is calculated"):
         st.write(
             "Target − committed costs − buffer = everyday allowance. Bill cycles are spread over "

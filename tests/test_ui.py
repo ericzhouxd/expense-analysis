@@ -33,6 +33,9 @@ class CachedDatabaseProxy:
     def list_transactions(self):
         return self.database.list_transactions()
 
+    def get_spending_plan(self):
+        return self.database.get_spending_plan()
+
 
 def test_transaction_list_is_compact_html_and_escapes_user_content():
     frame = pd.DataFrame(
@@ -61,7 +64,13 @@ def test_transaction_list_is_compact_html_and_escapes_user_content():
     assert markup.startswith('<div class="transaction-list">')
 
 
-def test_sidebar_has_three_theme_choices_without_navigation_heading():
+def test_sidebar_has_three_theme_choices_without_navigation_heading(tmp_path, monkeypatch):
+    from expense_analysis import ui
+
+    database = Database(tmp_path / "sidebar.sqlite3")
+    database.initialize()
+    monkeypatch.setattr(ui, "_database", lambda: database)
+    monkeypatch.setattr(ui, "load_config", AppConfig)
     app = AppTest.from_file("app.py").run(timeout=30)
     sidebar_html = "".join(block.proto.body for block in app.sidebar.get("html"))
 
@@ -83,6 +92,24 @@ def test_kpi_markup_escapes_content_and_charts_hide_toolbar():
     chart = _style_figure(go.Figure(go.Bar(x=["Food"], y=[12])))
     assert chart.layout.yaxis.griddash == "dot"
     assert chart.data[0].marker.pattern.shape == "."
+
+
+def test_category_charts_keep_every_label_and_comparisons_use_distinct_patterns():
+    labels = [f"Category {index}" for index in range(20)]
+    chart = _style_figure(go.Figure(go.Bar(x=list(range(20)), y=labels, orientation="h")))
+    assert chart.layout.height >= 20 * 36 + 100
+    assert list(chart.data[0].y) == labels
+    assert chart.layout.showlegend is False
+    chart = _style_figure(
+        go.Figure(
+            [
+                go.Bar(x=[1], y=[20], name="2025"),
+                go.Bar(x=[1], y=[30], name="2026"),
+            ]
+        )
+    )
+    assert chart.data[0].marker.pattern.shape != chart.data[1].marker.pattern.shape
+    assert chart.layout.legend.orientation == "h"
 
 
 def test_add_transaction_dialog_saves_transaction(tmp_path):
