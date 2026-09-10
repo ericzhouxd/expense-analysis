@@ -129,10 +129,13 @@ def test_mid_write_failure_rolls_back_earlier_changes(ledger):
 
 
 @pytest.mark.parametrize("reverse", [False, True])
-def test_duplicate_detection_is_independent_of_batch_order(ledger, reverse):
+@pytest.mark.parametrize("transaction_type", ["expense", "Expense"])
+def test_duplicate_detection_is_independent_of_batch_order(ledger, reverse, transaction_type):
     database, [(first_id, first), (second_id, second)] = ledger
     changes = [
-        TransactionChange(first_id, first, replace(second, notes="Duplicate")),
+        TransactionChange(
+            first_id, first, replace(second, notes="Duplicate", transaction_type=transaction_type)
+        ),
         TransactionChange(second_id, second, replace(second, notes="Note only")),
     ]
     with pytest.raises(DuplicateTransactionError):

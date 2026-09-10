@@ -13,15 +13,28 @@ def test_saved_choices_are_shared_and_deduplicated(tmp_path):
     database = Database(tmp_path / "choices.sqlite3")
     database.initialize()
     config = AppConfig()
-    database.add_transaction(TransactionDraft(
-        date(2026, 9, 10), "Synthetic entry", 1000, "Food",
-        account="Travel wallet", payment_method="Gift card",
-    ))
-    database.save_spending_plan(SpendingPlan(
-        name="Synthetic plan", start=date(2026, 9, 1), months=9,
-        academic_target_cents=10000, summer_target_cents=0, buffer_cents=0,
-        commitments=(Commitment("Studio", 1000, ("Art, materials",)),), reference={},
-    ))
+    database.add_transaction(
+        TransactionDraft(
+            date(2026, 9, 10),
+            "Synthetic entry",
+            1000,
+            "Food",
+            account="Travel wallet",
+            payment_method="Gift card",
+        )
+    )
+    database.save_spending_plan(
+        SpendingPlan(
+            name="Synthetic plan",
+            start=date(2026, 9, 1),
+            months=9,
+            academic_target_cents=10000,
+            summer_target_cents=0,
+            buffer_cents=0,
+            commitments=(Commitment("Studio", 1000, ("Art, materials",)),),
+            reference={},
+        )
+    )
 
     categories = choice_options(database, config, "category")
     assert [value for value in categories if value.casefold() == "food"] == ["Food"]

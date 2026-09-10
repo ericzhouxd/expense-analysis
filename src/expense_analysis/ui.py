@@ -809,7 +809,9 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
         st.session_state["transaction_editor_baseline"] = editor_frame.copy(deep=True)
     editor_frame = st.session_state["transaction_editor_baseline"]
     choice_columns = {
-        "Category": "category", "Account": "account", "Payment method": "payment_method"
+        "Category": "category",
+        "Account": "account",
+        "Payment method": "payment_method",
     }
     display_frame = editor_frame.copy(deep=True)
     for column in choice_columns:
