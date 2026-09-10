@@ -99,6 +99,7 @@ def test_category_charts_keep_every_label_and_comparisons_use_distinct_patterns(
     chart = _style_figure(go.Figure(go.Bar(x=list(range(20)), y=labels, orientation="h")))
     assert chart.layout.height >= 20 * 36 + 100
     assert list(chart.data[0].y) == labels
+    assert chart.layout.showlegend is False
     chart = _style_figure(
         go.Figure(
             [

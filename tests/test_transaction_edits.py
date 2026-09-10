@@ -140,6 +140,27 @@ def test_duplicate_detection_is_independent_of_batch_order(ledger, reverse):
     assert database.get_transaction(first_id)["description"] == first.description
 
 
+def test_unvalidated_type_persists_a_fingerprint_matching_the_stored_row(ledger):
+    database, [(identifier, draft), _] = ledger
+    updated = replace(draft, transaction_type="Expense", notes="Mixed case")
+    assert updated.fingerprint != updated.validated().fingerprint
+    apply_changes(database, [TransactionChange(identifier, draft, updated)])
+    stored = database.get_transaction(identifier)
+    assert stored["transaction_type"] == "expense"
+    stored_draft = TransactionDraft(
+        transaction_date=date.fromisoformat(stored["transaction_date"]),
+        description=stored["description"],
+        amount_cents=stored["amount_cents"],
+        category=stored["category"],
+        account=stored["account"],
+        payment_method=stored["payment_method"],
+        merchant=stored["merchant"],
+        transaction_type=stored["transaction_type"],
+        notes=stored["notes"],
+    ).validated()
+    assert stored["fingerprint"] == stored_draft.fingerprint
+
+
 def render_editor(database):
     from expense_analysis.analytics import transactions_frame
     from expense_analysis.config import AppConfig

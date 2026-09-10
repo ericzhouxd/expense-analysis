@@ -97,6 +97,7 @@ def _style_figure(figure: go.Figure, *, height: int = 380) -> go.Figure:
         uniformtext_mode="hide",
         bargap=0.28,
         bargroupgap=0.08,
+        showlegend=has_legend,
     )
     figure.update_xaxes(
         showgrid=bool(horizontal),
@@ -850,7 +851,7 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
     )
     changes = []
     try:
-        changes = collect_changes(editor_frame, edited)
+        changes = collect_changes(display_frame, edited)
     except ValueError as exc:
         st.error(str(exc))
     review_column, discard_column = st.columns(2)

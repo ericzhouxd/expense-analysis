@@ -76,9 +76,10 @@ def apply_changes(database: Database, changes: list[TransactionChange]) -> None:
         return
     if len({change.transaction_id for change in changes}) != len(changes):
         raise ValueError("A transaction appears more than once in this batch")
-    for change in changes:
-        if change.after is not None:
-            change.after.validated()
+    validated_after = {
+        change.transaction_id: (change.after.validated() if change.after is not None else None)
+        for change in changes
+    }
     with database.connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
         for change in changes:
@@ -100,20 +101,22 @@ def apply_changes(database: Database, changes: list[TransactionChange]) -> None:
         for change in changes:
             fingerprints[change.before.fingerprint] -= 1
         for change in changes:
-            if change.after is not None:
-                fingerprints[change.after.fingerprint] += 1
+            draft = validated_after[change.transaction_id]
+            if draft is not None:
+                fingerprints[draft.fingerprint] += 1
         if any(count > max(1, original_counts[key]) for key, count in fingerprints.items()):
             raise DuplicateTransactionError("These edits would create a duplicate transaction")
 
         for change in changes:
-            if change.after is None:
+            draft = validated_after[change.transaction_id]
+            if draft is None:
                 connection.execute(
                     "DELETE FROM transactions WHERE id = ?", (change.transaction_id,)
                 )
             else:
-                values = asdict(change.after.validated())
+                values = asdict(draft)
                 values["transaction_date"] = values["transaction_date"].isoformat()
-                values["fingerprint"] = change.after.fingerprint
+                values["fingerprint"] = draft.fingerprint
                 assignments = ", ".join(f"{column} = ?" for column in values)
                 connection.execute(
                     f"UPDATE transactions SET {assignments}, updated_at = CURRENT_TIMESTAMP "
