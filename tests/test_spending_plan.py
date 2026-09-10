@@ -260,3 +260,24 @@ def test_setup_and_all_pages_use_synthetic_database(plan, tmp_path, monkeypatch)
         app.sidebar.radio[0].set_value(page).run()
         assert not app.exception, page
         assert all("<div" not in block.value for block in app.code), page
+
+
+def render_saved_plan_setup(database, plan):
+    from expense_analysis.budget_ui import _setup
+    from expense_analysis.config import AppConfig
+
+    _setup(database, plan, AppConfig())
+
+
+def test_budget_category_choices_preserve_commas_when_resaved(plan, tmp_path):
+    from streamlit.testing.v1 import AppTest
+
+    database = Database(tmp_path / "category-plan.sqlite3")
+    database.initialize()
+    updated = replace(plan, commitments=(Commitment("Studio", 1000, ("Art, materials",)),))
+    database.save_spending_plan(updated)
+    app = AppTest.from_function(render_saved_plan_setup, args=(database, updated)).run()
+    app.checkbox[0].check()
+    next(button for button in app.button if button.label == "Save spending plan").click().run()
+    assert not app.exception and not app.error
+    assert database.get_spending_plan().commitments[0].categories == ("Art, materials",)

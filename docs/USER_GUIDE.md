@@ -29,6 +29,8 @@ There are no remote font services, campus photos, or promotional slogans.
 
 Charts keep their controls out of the way. Click a chart to open it fullscreen, then
 click it again or press **Escape** to return to the page.
+Long category charts scroll vertically inside their panels. A scrollbar on the right
+keeps every category accessible without squeezing labels; legends stay interactive.
 
 ### Pages
 
@@ -52,7 +54,10 @@ Open **Transactions** and select **Add transaction** for normal entry. Enter adv
 through the form fields; Enter from **Notes** saves once the required values are filled.
 Shift+Enter adds a new line in Notes. After saving, select **View** in the confirmation
 box to reveal and highlight the new transaction, even when the active filters exclude it.
-The Category field accepts either an existing option or a new category name.
+Category, account, and payment-method fields accept new choices. Type a name and
+press Enter to see **Add new …?**; Enter again adds it, and Escape cancels.
+The same confirmation applies to filters and editable table choices. Custom choices
+saved with a transaction or spending plan become available elsewhere in the app.
 Amounts are entered as positive values; the selected transaction type determines how
 the amount affects spending and cash flow.
 
@@ -62,8 +67,13 @@ the amount affects spending and cash flow.
 - `transfer` is recorded but excluded from spending and cash flow.
 
 In **Transactions**, the default list view is optimized for reading. Select
-**Edit table** to change multiple transactions. Marked deletions require a
-separate confirmation before they are permanent.
+**Edit table** to change multiple transactions. Use **Review changes** to check
+the before/after values, then **Confirm changes** to save the batch. Marked
+deletions require an explicit acknowledgement. **Discard edits / reload** restores
+the saved table. Invalid amounts, missing required fields, new duplicates, and
+records changed in another session block the save; the batch is saved together.
+Category, account, and payment method each allow one choice per transaction.
+Remove the current choice before selecting or creating its replacement.
 
 ## Importing CSV files
 
@@ -111,7 +121,7 @@ Tuition includes student services; campus fees and insurance are separate.
 4. Choose each bill's cycle: monthly amount, quarterly amount, or one total for
    its coverage. First month is numbered from 1. Extend lease coverage to twelve
    months when appropriate; changing the plan length does not change bill rows.
-5. Map exact transaction categories to bills (comma-separated). Confirm the
+5. Select transaction categories for each bill, or type and confirm new ones. Confirm the
    setup and save. Nothing is saved automatically.
 
 The main calculation is:

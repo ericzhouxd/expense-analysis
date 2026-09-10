@@ -71,7 +71,7 @@ def test_theme_css_preserves_native_sidebar_and_readable_neon_controls():
     css = (root / "src/expense_analysis/assets/theme.css").read_text()
     bridge = (root / "src/expense_analysis/assets/theme_bridge.html").read_text()
 
-    assert "[data-testid='stSidebar'][aria-expanded='true']" not in css
+    assert "max-width: 244px" in css
     assert "[data-testid='stExpandSidebarButton']" in css
     assert "[data-testid='stBaseButton-primaryFormSubmit']" in css
     assert "[aria-label^='Selected']" in css

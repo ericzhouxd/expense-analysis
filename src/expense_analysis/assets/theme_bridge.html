@@ -120,6 +120,8 @@
       chart.classList.add('jizhang-chart-fullscreen');
       chart.setAttribute('aria-label', 'Exit fullscreen chart');
     }
+    const panel = chart.closest('[data-testid="stElementContainer"]');
+    if (panel) panel.scrollTop = 0;
     document.body.classList.toggle('jizhang-chart-open', willExpand);
     resizeChart(chart);
   };
@@ -130,7 +132,13 @@
       return;
     }
     const chart = event.target.closest('[data-testid="stPlotlyChart"]');
-    if (chart) toggleChart(chart);
+    if (chart) {
+      const bounds = chart.getBoundingClientRect();
+      // Leave the right scrollbar and legend controls available without opening fullscreen.
+      if (event.clientX >= bounds.left + chart.clientLeft + chart.clientWidth) return;
+      if (event.target.closest('.legend, .rangeslider-container, .modebar')) return;
+      toggleChart(chart);
+    }
   };
   const addFieldSelectors = [
     '.st-key-add_transaction_date',
