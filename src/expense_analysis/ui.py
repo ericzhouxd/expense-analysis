@@ -313,6 +313,16 @@ def _render_empty_state() -> None:
     )
 
 
+def _clear_focused_transaction() -> None:
+    """Drop a saved-transaction highlight once the activity filters change.
+
+    The "View" confirmation intentionally reveals a new transaction even when the
+    active filters exclude it. The highlight is a one-off reveal, so the first
+    filter edit should return the list to the filtered selection.
+    """
+    st.session_state.pop("focused_transaction_id", None)
+
+
 def _filtered_data(
     database: Database, config: AppConfig
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], pd.DataFrame]:
@@ -331,22 +341,36 @@ def _filtered_data(
             value=(minimum, maximum),
             min_value=minimum,
             max_value=max(maximum, date.today()),
+            on_change=_clear_focused_transaction,
         )
         if isinstance(selected_range, tuple) and len(selected_range) == 2:
             start, end = selected_range
         else:
             start, end = minimum, maximum
-        search = st.text_input("Search", placeholder="Description, merchant, notes…")
+        search = st.text_input(
+            "Search",
+            placeholder="Description, merchant, notes…",
+            on_change=_clear_focused_transaction,
+        )
         selected_categories = st.multiselect(
-            "Categories", category_options, placeholder="All categories", accept_new_options=True
+            "Categories",
+            category_options,
+            placeholder="All categories",
+            accept_new_options=True,
+            on_change=_clear_focused_transaction,
         )
         selected_types = st.multiselect(
             "Transaction types",
             ["expense", "refund", "income", "transfer"],
             placeholder="All types",
+            on_change=_clear_focused_transaction,
         )
         selected_accounts = st.multiselect(
-            "Accounts", account_options, placeholder="All accounts", accept_new_options=True
+            "Accounts",
+            account_options,
+            placeholder="All accounts",
+            accept_new_options=True,
+            on_change=_clear_focused_transaction,
         )
     if (
         start == minimum
