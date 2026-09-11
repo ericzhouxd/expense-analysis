@@ -77,6 +77,7 @@ def test_theme_css_preserves_native_sidebar_and_readable_neon_controls():
     assert "[aria-label^='Selected']" in css
     assert "border-radius: 0 !important" in css
     assert ".jizhang-chart-fullscreen" in css
+    assert "stFullScreenFrame']:has([data-testid='stDataEditor'], [data-testid='stDataFrame'])" in css
     assert "data-jizhang-theme-choice" in bridge
     assert "stMainMenuItem-theme-${theme}" in bridge
     assert "addFieldSelectors" in bridge
