@@ -342,6 +342,13 @@ h1, h2, h3 { font-family: var(--ui-font); }
 [data-testid='stFullScreenFrame']:has(> .jizhang-chart-fullscreen) {
   min-height: 100%; width: 100% !important;
 }
+[data-testid='stFullScreenFrame']:has([data-testid='stDataEditor'], [data-testid='stDataFrame'])
+  [data-testid='stDataEditor'],
+[data-testid='stFullScreenFrame']:has([data-testid='stDataEditor'], [data-testid='stDataFrame'])
+  [data-testid='stDataFrame'] {
+  height: 100% !important;
+  max-height: none !important;
+}
 [data-testid='stPlotlyChart'].jizhang-chart-fullscreen { cursor: zoom-out; min-height: 100%; }
 body.jizhang-chart-open { overflow: hidden; }
 body.jizhang-chart-open::before { content: ''; position: fixed; inset: 0; z-index: 1000000;
