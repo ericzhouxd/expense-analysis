@@ -86,3 +86,15 @@ def test_theme_css_preserves_native_sidebar_and_readable_neon_controls():
     assert "stNumberInputStepDown" in css
     assert "stNumberInputClearButton" in css
     assert "InputInstructions" in css
+
+
+def test_theme_bridge_dismisses_date_calendar_before_advancing_fields():
+    root = Path(__file__).resolve().parents[1]
+    bridge = (root / "src/expense_analysis/assets/theme_bridge.html").read_text()
+
+    assert '[data-baseweb="calendar"]' in bridge
+    assert "addDateFieldSelector" in bridge
+    assert "closeAddDateCalendar" in bridge
+    close_calendar = bridge.index("closeAddDateCalendar(fields[index]);")
+    advance = bridge.index("fieldControl(fields[index + 1])?.focus();")
+    assert close_calendar < advance

@@ -151,9 +151,27 @@
     '.st-key-add_transaction_payment_method',
     '.st-key-add_transaction_notes',
   ];
+  const addDateFieldSelector = addFieldSelectors[0];
   const fieldControl = (field) => field?.querySelector(
     'input:not([type="hidden"]), textarea, [role="combobox"], button',
   );
+  const dateCalendarIsOpen = () => {
+    const calendar = document.querySelector('[data-baseweb="calendar"]');
+    return Boolean(calendar && calendar.getClientRects().length);
+  };
+  const closeAddDateCalendar = (field) => {
+    if (!field?.matches(addDateFieldSelector) || !dateCalendarIsOpen()) return;
+    // Base Web's calendar ignores programmatic blur, so replay the Tab keydown it
+    // already treats as "close" before focus moves on. It reads keyCode, which the
+    // KeyboardEvent constructor cannot set.
+    const input = fieldControl(field);
+    if (!input) return;
+    const close = new KeyboardEvent('keydown', {
+      key: 'Tab', code: 'Tab', bubbles: true, cancelable: true,
+    });
+    Object.defineProperty(close, 'keyCode', {get: () => 9});
+    input.dispatchEvent(close);
+  };
   const handleAddFormEnter = (event) => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return false;
     const fields = addFieldSelectors.map((selector) => document.querySelector(selector));
@@ -163,6 +181,7 @@
 
     event.preventDefault();
     event.stopImmediatePropagation();
+    closeAddDateCalendar(fields[index]);
     if (index < fields.length - 1) {
       fieldControl(fields[index + 1])?.focus();
       return true;
