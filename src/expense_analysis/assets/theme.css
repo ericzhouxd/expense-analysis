@@ -282,6 +282,8 @@ h1, h2, h3 { font-family: var(--ui-font); }
 [data-testid='stMultiSelect'] svg[title='open'] {
   flex: 0 0 40px; width: 40px; height: 40px; margin: 0; padding: 10px;
   box-sizing: border-box; border-left: 1px solid var(--line); }
+.st-key-add_transaction_submit [data-testid='stBaseButton-primaryFormSubmit'] {
+  height: 42px; min-height: 42px; box-sizing: border-box; }
 .choice-confirmation { position: fixed; z-index: 2147483647; max-width: calc(100vw - 24px);
   padding: 13px; border: 1px solid var(--ink); box-shadow: 4px 4px 0 var(--positive);
   background: var(--panel); color: var(--ink); font: 13px/1.5 var(--ui-font); }

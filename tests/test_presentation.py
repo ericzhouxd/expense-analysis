@@ -86,3 +86,21 @@ def test_theme_css_preserves_native_sidebar_and_readable_neon_controls():
     assert "stNumberInputStepDown" in css
     assert "stNumberInputClearButton" in css
     assert "InputInstructions" in css
+
+
+def test_add_transaction_form_boxes_share_one_height():
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "src/expense_analysis/assets/theme.css").read_text()
+
+    for selector in (
+        ".st-key-add_transaction_date [data-baseweb='input']",
+        ".st-key-add_transaction_description [data-testid='stTextInputRootElement']",
+        ".st-key-add_transaction_merchant [data-testid='stTextInputRootElement']",
+        ".st-key-add_transaction_amount [data-testid='stNumberInputContainer']",
+        "[data-testid='stSelectbox'] .react-aria-ComboBox > [role='group']",
+        ".st-key-add_transaction_submit [data-testid='stBaseButton-primaryFormSubmit']",
+    ):
+        start = css.index(selector)
+        rule = css[start : css.index("}", start)]
+        assert "height: 42px" in rule
+        assert "min-height: 42px" in rule
