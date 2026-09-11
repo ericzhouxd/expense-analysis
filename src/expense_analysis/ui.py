@@ -57,6 +57,10 @@ PLOTLY_CONFIG = {
     "responsive": True,
     "scrollZoom": False,
 }
+# The sidebar activity filters are recreated whenever their generation changes, so a
+# filter that predates a new transaction cannot keep it out of the dashboard.
+_ACTIVITY_FILTER_GENERATION = "activity_filter_generation"
+_ACTIVITY_FILTER_SIGNATURE = "activity_filter_signature"
 
 
 def _currency(value: float) -> str:
@@ -313,6 +317,19 @@ def _render_empty_state() -> None:
     )
 
 
+def _invalidate_activity_filters() -> None:
+    """Rebuild the sidebar activity filters with their defaults on the next run.
+
+    The dashboard and insights honour the activity filters, so a filter left over
+    from before a transaction is added or imported can keep the new data out of the
+    analysis. Bumping the generation recreates the widgets instead of restoring the
+    stale selection.
+    """
+    st.session_state[_ACTIVITY_FILTER_GENERATION] = (
+        st.session_state.get(_ACTIVITY_FILTER_GENERATION, 0) + 1
+    )
+
+
 def _filtered_data(
     database: Database, config: AppConfig
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], pd.DataFrame]:
@@ -325,28 +342,49 @@ def _filtered_data(
     maximum = all_frame["transaction_date"].max().date()
     category_options = choice_options(database, config, "category")
     account_options = choice_options(database, config, "account")
+    # Recreate the filters when the ledger range or its choice lists change, matching the
+    # previous behaviour of dropping options that no longer exist.
+    signature = (minimum, maximum, tuple(category_options), tuple(account_options))
+    if st.session_state.get(_ACTIVITY_FILTER_SIGNATURE) != signature:
+        st.session_state[_ACTIVITY_FILTER_SIGNATURE] = signature
+        _invalidate_activity_filters()
+    filter_generation = st.session_state.get(_ACTIVITY_FILTER_GENERATION, 0)
     with st.sidebar.expander("Filter activity", expanded=False):
         selected_range = st.date_input(
             "Date range",
             value=(minimum, maximum),
             min_value=minimum,
             max_value=max(maximum, date.today()),
+            key=f"activity_date_range_{filter_generation}",
         )
         if isinstance(selected_range, tuple) and len(selected_range) == 2:
             start, end = selected_range
         else:
             start, end = minimum, maximum
-        search = st.text_input("Search", placeholder="Description, merchant, notes…")
+        search = st.text_input(
+            "Search",
+            placeholder="Description, merchant, notes…",
+            key=f"activity_search_{filter_generation}",
+        )
         selected_categories = st.multiselect(
-            "Categories", category_options, placeholder="All categories", accept_new_options=True
+            "Categories",
+            category_options,
+            placeholder="All categories",
+            accept_new_options=True,
+            key=f"activity_categories_{filter_generation}",
         )
         selected_types = st.multiselect(
             "Transaction types",
             ["expense", "refund", "income", "transfer"],
             placeholder="All types",
+            key=f"activity_types_{filter_generation}",
         )
         selected_accounts = st.multiselect(
-            "Accounts", account_options, placeholder="All accounts", accept_new_options=True
+            "Accounts",
+            account_options,
+            placeholder="All accounts",
+            accept_new_options=True,
+            key=f"activity_accounts_{filter_generation}",
         )
     if (
         start == minimum
@@ -948,6 +986,7 @@ def _add_transaction_dialog(database: Database, config: AppConfig) -> None:
         except (ValueError, DuplicateTransactionError) as exc:
             st.error(str(exc))
         else:
+            _invalidate_activity_filters()
             st.session_state["saved_transaction_id"] = transaction_id
             st.session_state["show_saved_transaction_notice"] = True
             st.rerun()
@@ -1014,6 +1053,7 @@ def _render_import_export(
             disabled=ready == 0,
         ):
             result = database.import_transactions(preview.valid_drafts)
+            _invalidate_activity_filters()
             st.success(
                 f"Imported {result.imported}; skipped {result.duplicates_skipped} duplicate(s)."
             )
