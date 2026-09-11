@@ -86,3 +86,15 @@ def test_theme_css_preserves_native_sidebar_and_readable_neon_controls():
     assert "stNumberInputStepDown" in css
     assert "stNumberInputClearButton" in css
     assert "InputInstructions" in css
+
+
+def test_navigation_hides_the_native_radio_circle_beside_the_page_counter():
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "src/expense_analysis/assets/theme.css").read_text()
+
+    assert "counter(page, decimal-leading-zero)" in css
+    assert (
+        ".st-key-main_navigation [role='radiogroup'] div:has(> "
+        "[data-testid='stMarkdownContainer'])" in css
+    )
+    assert "> div:first-child { display: none !important; }" in css
