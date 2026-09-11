@@ -342,10 +342,10 @@ h1, h2, h3 { font-family: var(--ui-font); }
 [data-testid='stFullScreenFrame']:has(> .jizhang-chart-fullscreen) {
   min-height: 100%; width: 100% !important;
 }
-[data-testid='stFullScreenFrame']:has([data-testid='stDataEditor'], [data-testid='stDataFrame'])
-  [data-testid='stDataEditor'],
-[data-testid='stFullScreenFrame']:has([data-testid='stDataEditor'], [data-testid='stDataFrame'])
-  [data-testid='stDataFrame'] {
+/* Glide pins the resizable table box to the element's pixel height inline, so in
+   fullscreen the grid stays content-sized unless that inline height is overridden. */
+[data-testid='stFullScreenFrame']:has([aria-label='Close fullscreen'])
+  [data-testid='stDataFrameResizable'] {
   height: 100% !important;
   max-height: none !important;
 }
