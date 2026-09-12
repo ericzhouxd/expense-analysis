@@ -5,7 +5,7 @@ description = "A privacy-first, local expense tracker and analysis dashboard."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "pandas>=2.3,<3",
+    "pandas>=2.3,<4",
     "plotly>=6.2,<7",
     "streamlit>=1.60,<2",
 ]
@@ -18,7 +18,7 @@ expense-export = "expense_analysis.cli:export_main"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.4,<9",
+    "pytest>=8.4,<10",
     "ruff>=0.12,<1",
 ]
 
