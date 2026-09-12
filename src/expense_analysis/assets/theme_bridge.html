@@ -11,13 +11,15 @@
     document.removeEventListener('keydown', window.jizhangUiKeyHandler, true);
   }
   let pending = false;
+  // The theme buttons are a radiogroup, so only the checked one belongs in the tab
+  // order and the arrow keys move the selection (ARIA radio pattern).
+  const themeArrowKeys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'];
   const syncThemeChoices = () => {
     const selected = window.jizhangThemeChoice || 'System';
     document.querySelectorAll('[data-jizhang-theme-choice]').forEach((control) => {
-      control.setAttribute(
-        'aria-checked',
-        String(control.getAttribute('data-jizhang-theme-choice') === selected),
-      );
+      const isSelected = control.getAttribute('data-jizhang-theme-choice') === selected;
+      control.setAttribute('aria-checked', String(isSelected));
+      control.setAttribute('tabindex', isSelected ? '0' : '-1');
     });
   };
   const syncCharts = () => {
@@ -203,6 +205,28 @@
   };
   const handleUiKey = (event) => {
     if (handleAddFormEnter(event)) return;
+    const themeChoice = event.target.closest?.('[data-jizhang-theme-choice]');
+    if (themeChoice && themeArrowKeys.includes(event.key)) {
+      event.preventDefault();
+      const choices = [...document.querySelectorAll('[data-jizhang-theme-choice]')];
+      const index = choices.indexOf(themeChoice);
+      const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
+      const next =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? choices.length - 1
+            : (index + step + choices.length) % choices.length;
+      const target = choices[next];
+      if (target) {
+        // Selection follows focus, as the radio pattern expects.
+        window.jizhangThemeChoice = target.getAttribute('data-jizhang-theme-choice');
+        syncThemeChoices();
+        target.focus();
+        chooseTheme(window.jizhangThemeChoice);
+      }
+      return;
+    }
     const chart = event.target.closest?.('[data-testid="stPlotlyChart"]');
     if (chart && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault();

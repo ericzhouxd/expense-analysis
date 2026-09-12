@@ -24,6 +24,10 @@ dev = [
     "pytest>=8.4,<10",
     "ruff>=0.12,<1",
 ]
+# Only tests/test_rendered_geometry.py needs this, and only when -m rendered runs.
+rendered = [
+    "websockets>=15,<17",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -34,7 +38,10 @@ packages = ["src/expense_analysis"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m \"not rendered\""
+markers = [
+    "rendered: needs Chromium and a booted app; run with `uv run pytest -m rendered`",
+]
 
 [tool.ruff]
 line-length = 100
