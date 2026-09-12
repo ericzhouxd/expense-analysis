@@ -330,6 +330,16 @@ def _invalidate_activity_filters() -> None:
     )
 
 
+def _clear_focused_transaction() -> None:
+    """Drop a saved-transaction highlight once the activity filters change.
+
+    The "View" confirmation intentionally reveals a new transaction even when the
+    active filters exclude it. The highlight is a one-off reveal, so the first
+    filter edit should return the list to the filtered selection.
+    """
+    st.session_state.pop("focused_transaction_id", None)
+
+
 def _filtered_data(
     database: Database, config: AppConfig
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], pd.DataFrame]:
@@ -356,6 +366,7 @@ def _filtered_data(
             min_value=minimum,
             max_value=max(maximum, date.today()),
             key=f"activity_date_range_{filter_generation}",
+            on_change=_clear_focused_transaction,
         )
         if isinstance(selected_range, tuple) and len(selected_range) == 2:
             start, end = selected_range
@@ -365,6 +376,7 @@ def _filtered_data(
             "Search",
             placeholder="Description, merchant, notes…",
             key=f"activity_search_{filter_generation}",
+            on_change=_clear_focused_transaction,
         )
         selected_categories = st.multiselect(
             "Categories",
@@ -372,12 +384,14 @@ def _filtered_data(
             placeholder="All categories",
             accept_new_options=True,
             key=f"activity_categories_{filter_generation}",
+            on_change=_clear_focused_transaction,
         )
         selected_types = st.multiselect(
             "Transaction types",
             ["expense", "refund", "income", "transfer"],
             placeholder="All types",
             key=f"activity_types_{filter_generation}",
+            on_change=_clear_focused_transaction,
         )
         selected_accounts = st.multiselect(
             "Accounts",
@@ -385,6 +399,7 @@ def _filtered_data(
             placeholder="All accounts",
             accept_new_options=True,
             key=f"activity_accounts_{filter_generation}",
+            on_change=_clear_focused_transaction,
         )
     if (
         start == minimum

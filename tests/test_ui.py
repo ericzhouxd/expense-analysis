@@ -268,3 +268,30 @@ def test_add_transaction_dialog_invalidates_activity_filters(tmp_path, monkeypat
 
     assert database.count_transactions() == 1
     assert invalidations == [True]
+
+
+def test_editing_activity_filters_ends_the_revealed_transaction_highlight(tmp_path):
+    database = Database(tmp_path / "filters.sqlite3")
+    database.initialize()
+    database.add_transaction(
+        TransactionDraft(
+            transaction_date=date(2026, 7, 30),
+            description="Synthetic groceries",
+            amount_cents=1000,
+            category="Food",
+            account="Checking",
+            payment_method="Card",
+        )
+    )
+
+    app = AppTest.from_function(render_activity_filters, args=(database,)).run(timeout=30)
+    search_filter(app).set_value("Synthetic").run(timeout=30)
+    app.session_state["focused_transaction_id"] = "synthetic-id"
+
+    # A plain rerun leaves the one-off reveal in place.
+    app.run(timeout=30)
+    assert app.session_state["focused_transaction_id"] == "synthetic-id"
+
+    # Editing a filter ends the reveal so the filtered selection is respected.
+    search_filter(app).set_value("no-match").run(timeout=30)
+    assert "focused_transaction_id" not in app.session_state
