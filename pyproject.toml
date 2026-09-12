@@ -5,7 +5,7 @@ description = "A privacy-first, local expense tracker and analysis dashboard."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "pandas>=2.3,<3",
+    "pandas>=2.3,<4",
     "plotly>=6.2,<7",
     "streamlit>=1.60,<2",
 ]
