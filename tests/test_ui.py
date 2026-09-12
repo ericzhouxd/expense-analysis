@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -15,6 +16,8 @@ from expense_analysis.ui import (
     _style_figure,
     _transaction_list_markup,
 )
+
+APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
 
 def render_add_transaction_dialog(database):
@@ -71,7 +74,7 @@ def test_sidebar_has_three_theme_choices_without_navigation_heading(tmp_path, mo
     database.initialize()
     monkeypatch.setattr(ui, "_database", lambda: database)
     monkeypatch.setattr(ui, "load_config", AppConfig)
-    app = AppTest.from_file("app.py").run(timeout=30)
+    app = AppTest.from_file(APP_PATH).run(timeout=30)
     sidebar_html = "".join(block.proto.body for block in app.sidebar.get("html"))
 
     assert sidebar_html.count("data-jizhang-theme-choice") == 3
@@ -169,7 +172,7 @@ def test_transactions_page_opens_dialog_and_reveals_saved_transaction(tmp_path, 
     monkeypatch.setattr(ui, "_database", lambda: database)
     monkeypatch.setattr(ui, "load_config", AppConfig)
 
-    app = AppTest.from_file("app.py").run()
+    app = AppTest.from_file(APP_PATH).run()
     app.sidebar.radio[0].set_value("Transactions").run()
     next(button for button in app.button if button.label == "Add transaction").click().run()
     assert any(field.label == "Notes" for field in app.text_area)
