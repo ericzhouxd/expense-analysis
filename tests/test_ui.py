@@ -185,14 +185,89 @@ def test_transactions_page_opens_dialog_and_reveals_saved_transaction(tmp_path, 
 
 
 def render_activity_filters(database):
-    from expense_analysis.config import AppConfig
-    from expense_analysis.ui import _filtered_data
+    import streamlit as st
 
+    from expense_analysis.config import AppConfig
+    from expense_analysis.ui import _filtered_data, _invalidate_activity_filters
+
+    # Emulates the rerun that follows a successful add/import: the mutation handler
+    # asks for fresh filters before the dashboard and insights are rendered.
+    if st.session_state.pop("simulate_transaction_added", False):
+        _invalidate_activity_filters()
     _filtered_data(database, AppConfig())
 
 
 def search_filter(app):
     return next(field for field in app.sidebar.text_input if field.label == "Search")
+
+
+def test_stale_activity_filters_reset_so_analysis_includes_new_transactions(tmp_path):
+    database = Database(tmp_path / "filters.sqlite3")
+    database.initialize()
+    database.add_transaction(
+        TransactionDraft(
+            transaction_date=date(2026, 7, 30),
+            description="Synthetic groceries",
+            amount_cents=1000,
+            category="Food",
+            account="Checking",
+            payment_method="Card",
+        )
+    )
+
+    app = AppTest.from_function(render_activity_filters, args=(database,)).run(timeout=30)
+
+    # A filter that hides everything must survive ordinary reruns...
+    search_filter(app).set_value("no-match").run(timeout=30)
+    assert search_filter(app).value == "no-match"
+
+    # ...but a new transaction invalidates it so the analysis can show the new row.
+    app.session_state["simulate_transaction_added"] = True
+    app.run(timeout=30)
+    assert search_filter(app).value in ("", None)
+
+
+def invalidate_activity_filters_twice():
+    from expense_analysis.ui import _invalidate_activity_filters
+
+    _invalidate_activity_filters()
+    _invalidate_activity_filters()
+
+
+def test_invalidate_activity_filters_bumps_the_widget_generation():
+    from expense_analysis.ui import _ACTIVITY_FILTER_GENERATION
+
+    app = AppTest.from_function(invalidate_activity_filters_twice).run(timeout=30)
+
+    assert app.session_state[_ACTIVITY_FILTER_GENERATION] == 2
+
+
+def render_add_transaction_for_test(database):
+    from expense_analysis.config import AppConfig
+    from expense_analysis.ui import _add_transaction_dialog
+
+    _add_transaction_dialog(database, AppConfig())
+
+
+def test_add_transaction_dialog_invalidates_activity_filters(tmp_path, monkeypatch):
+    from expense_analysis import ui
+
+    database = Database(tmp_path / "invalidated.sqlite3")
+    database.initialize()
+    invalidations = []
+    monkeypatch.setattr(ui, "_invalidate_activity_filters", lambda: invalidations.append(True))
+
+    app = AppTest.from_function(render_add_transaction_for_test, args=(database,)).run(timeout=30)
+    next(field for field in app.text_input if field.label == "Description").set_value(
+        "Synthetic dinner"
+    )
+    next(field for field in app.number_input if field.label == "Amount").set_value(12.5)
+    next(button for button in app.button if button.label == "Save transaction").click().run(
+        timeout=30
+    )
+
+    assert database.count_transactions() == 1
+    assert invalidations == [True]
 
 
 def test_editing_activity_filters_ends_the_revealed_transaction_highlight(tmp_path):

@@ -87,6 +87,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible,
 }
 .st-key-main_navigation [role='radiogroup'] label::before { content: counter(page, decimal-leading-zero);
   font-family: var(--number-font); font-size: 1.15rem; margin-right: 8px; }
+/* The page counter already marks each entry; drop the native radio circle between it and the title. */
+.st-key-main_navigation [role='radiogroup'] div:has(> [data-testid='stMarkdownContainer'])
+  > div:first-child { display: none !important; }
 .st-key-main_navigation [role='radiogroup'] label:has(input:checked) { background: var(--accent); color: #12160a; }
 .st-key-main_navigation [role='radiogroup'] label:has(input:checked) * { color: #12160a !important; }
 .st-key-main_navigation [role='radiogroup'] label:has(input:focus-visible) { outline: 2px solid var(--positive); }
@@ -282,6 +285,8 @@ h1, h2, h3 { font-family: var(--ui-font); }
 [data-testid='stMultiSelect'] svg[title='open'] {
   flex: 0 0 40px; width: 40px; height: 40px; margin: 0; padding: 10px;
   box-sizing: border-box; border-left: 1px solid var(--line); }
+.st-key-add_transaction_submit [data-testid='stBaseButton-primaryFormSubmit'] {
+  height: 42px; min-height: 42px; box-sizing: border-box; }
 .choice-confirmation { position: fixed; z-index: 2147483647; max-width: calc(100vw - 24px);
   padding: 13px; border: 1px solid var(--ink); box-shadow: 4px 4px 0 var(--positive);
   background: var(--panel); color: var(--ink); font: 13px/1.5 var(--ui-font); }
@@ -342,10 +347,10 @@ h1, h2, h3 { font-family: var(--ui-font); }
 [data-testid='stFullScreenFrame']:has(> .jizhang-chart-fullscreen) {
   min-height: 100%; width: 100% !important;
 }
-[data-testid='stFullScreenFrame']:has([data-testid='stDataEditor'], [data-testid='stDataFrame'])
-  [data-testid='stDataEditor'],
-[data-testid='stFullScreenFrame']:has([data-testid='stDataEditor'], [data-testid='stDataFrame'])
-  [data-testid='stDataFrame'] {
+/* Glide pins the resizable table box to the element's pixel height inline, so in
+   fullscreen the grid stays content-sized unless that inline height is overridden. */
+[data-testid='stFullScreenFrame']:has([aria-label='Close fullscreen'])
+  [data-testid='stDataFrameResizable'] {
   height: 100% !important;
   max-height: none !important;
 }

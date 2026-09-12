@@ -55,6 +55,8 @@ through the form fields; Enter from **Notes** saves once the required values are
 Shift+Enter adds a new line in Notes. After saving, select **View** in the confirmation
 box to reveal and highlight the new transaction, even when the active filters exclude it.
 Editing a filter ends that reveal and returns the list to the filtered selection.
+Saving or importing transactions also clears the activity filters, so the overview and
+insights immediately include the new records; reapply a filter for a narrower view.
 Category, account, and payment-method fields accept new choices. Type a name and
 press Enter to see **Add new …?**; Enter again adds it, and Escape cancels.
 The same confirmation applies to filters and editable table choices. Custom choices

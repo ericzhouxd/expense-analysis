@@ -77,7 +77,13 @@ def test_theme_css_preserves_native_sidebar_and_readable_neon_controls():
     assert "[aria-label^='Selected']" in css
     assert "border-radius: 0 !important" in css
     assert ".jizhang-chart-fullscreen" in css
-    assert "stFullScreenFrame']:has([data-testid='stDataEditor'], [data-testid='stDataFrame'])" in css
+    assert (
+        "[data-testid='stFullScreenFrame']:has([aria-label='Close fullscreen'])\n"
+        "  [data-testid='stDataFrameResizable'] {\n"
+        "  height: 100% !important;\n"
+        "  max-height: none !important;\n"
+        "}" in css
+    )
     assert "data-jizhang-theme-choice" in bridge
     assert "stMainMenuItem-theme-${theme}" in bridge
     assert "addFieldSelectors" in bridge
@@ -86,3 +92,45 @@ def test_theme_css_preserves_native_sidebar_and_readable_neon_controls():
     assert "stNumberInputStepDown" in css
     assert "stNumberInputClearButton" in css
     assert "InputInstructions" in css
+
+
+def test_theme_bridge_dismisses_date_calendar_before_advancing_fields():
+    root = Path(__file__).resolve().parents[1]
+    bridge = (root / "src/expense_analysis/assets/theme_bridge.html").read_text()
+
+    assert '[data-baseweb="calendar"]' in bridge
+    assert "addDateFieldSelector" in bridge
+    assert "closeAddDateCalendar" in bridge
+    close_calendar = bridge.index("closeAddDateCalendar(fields[index]);")
+    advance = bridge.index("fieldControl(fields[index + 1])?.focus();")
+    assert close_calendar < advance
+    
+    
+def test_add_transaction_form_boxes_share_one_height():
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "src/expense_analysis/assets/theme.css").read_text()
+
+    for selector in (
+        ".st-key-add_transaction_date [data-baseweb='input']",
+        ".st-key-add_transaction_description [data-testid='stTextInputRootElement']",
+        ".st-key-add_transaction_merchant [data-testid='stTextInputRootElement']",
+        ".st-key-add_transaction_amount [data-testid='stNumberInputContainer']",
+        "[data-testid='stSelectbox'] .react-aria-ComboBox > [role='group']",
+        ".st-key-add_transaction_submit [data-testid='stBaseButton-primaryFormSubmit']",
+    ):
+        start = css.index(selector)
+        rule = css[start : css.index("}", start)]
+        assert "height: 42px" in rule
+        assert "min-height: 42px" in rule
+        
+        
+def test_navigation_hides_the_native_radio_circle_beside_the_page_counter():
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "src/expense_analysis/assets/theme.css").read_text()
+
+    assert "counter(page, decimal-leading-zero)" in css
+    assert (
+        ".st-key-main_navigation [role='radiogroup'] div:has(> "
+        "[data-testid='stMarkdownContainer'])" in css
+    )
+    assert "> div:first-child { display: none !important; }" in css
