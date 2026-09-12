@@ -88,9 +88,10 @@ def analyze_main() -> None:
     print(f"  Monthly average:   ${metrics.monthly_average:,.2f}")
     if metrics.change_from_previous is not None:
         print(f"  vs previous month: {metrics.change_from_previous:+.1f}%")
-    if savings["income"]:
-        print(f"  Recorded income:   ${float(savings['income']):,.2f}")
-        print(f"  Savings:           ${float(savings['savings']):,.2f}")
+    income = float(savings["income"] or 0.0)
+    if income:
+        print(f"  Recorded income:   ${income:,.2f}")
+        print(f"  Savings:           ${float(savings['savings'] or 0.0):,.2f}")
 
 
 def import_main() -> None:
@@ -138,4 +139,5 @@ def export_main() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(analyze_main())
+    analyze_main()
+    sys.exit(0)

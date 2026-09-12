@@ -69,5 +69,5 @@ def test_choice_options_fall_back_for_proxies_without_a_distinct_query(tmp_path)
             payment_method="Gift card",
         )
     )
-    options = choice_options(Proxy(database), AppConfig(), "account")
+    options = choice_options(Proxy(database), AppConfig(), "account")  # type: ignore[arg-type]
     assert "Travel wallet" in options

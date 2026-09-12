@@ -76,6 +76,11 @@ def test_only_changed_rows_are_saved_and_deletions_are_explicit(ledger):
     assert database.get_transaction(entries[1][0]) is None
 
 
+def set_cell(frame, row, column, values):
+    """Editor cells intentionally hold lists; pandas stubs type every cell as a scalar."""
+    frame.at[row, column] = values
+
+
 def test_choice_cells_preserve_scalars_and_reject_multiple_values(ledger):
     _, entries = ledger
     original = pd.DataFrame([editor_row(*entry) for entry in entries])
@@ -83,13 +88,15 @@ def test_choice_cells_preserve_scalars_and_reject_multiple_values(ledger):
     for column in ("Category", "Account", "Payment method"):
         edited[column] = edited[column].map(lambda value: [value] if value else [])
     assert collect_changes(original, edited) == []
-    edited.at[0, "Category"] = ["New category"]
-    assert collect_changes(original, edited)[0].after.category == "New category"
-    edited.at[0, "Account"] = ["Checking", "Savings"]
+    set_cell(edited, 0, "Category", ["New category"])
+    changes = collect_changes(original, edited)
+    assert changes[0].after is not None
+    assert changes[0].after.category == "New category"
+    set_cell(edited, 0, "Account", ["Checking", "Savings"])
     with pytest.raises(ValueError, match="Row 1: Choose only one account"):
         collect_changes(original, edited)
-    edited.at[0, "Account"] = []
-    edited.at[0, "Category"] = []
+    set_cell(edited, 0, "Account", [])
+    set_cell(edited, 0, "Category", [])
     with pytest.raises(ValueError, match="Category is required"):
         collect_changes(original, edited)
 

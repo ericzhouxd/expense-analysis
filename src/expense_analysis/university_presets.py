@@ -1,6 +1,27 @@
 """Public, versioned reference data. Never store student information here."""
 
-UCLA_2026 = {
+from typing import TypedDict
+
+
+class CohortRates(TypedDict):
+    tuition: int
+    nrst: int
+
+
+class UclaPreset(TypedDict):
+    id: str
+    school: str
+    academic_year: str
+    source: str
+    verified_on: str
+    months: int
+    campus_fees: int
+    insurance: int
+    cohorts: dict[str, CohortRates]
+    housing: dict[str, dict[str, int]]
+
+
+UCLA_2026: UclaPreset = {
     "id": "ucla-undergraduate-2026-27-v1",
     "school": "UCLA",
     "academic_year": "2026–27",

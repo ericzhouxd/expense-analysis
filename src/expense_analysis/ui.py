@@ -4,6 +4,7 @@ import html
 import sqlite3
 from dataclasses import asdict
 from datetime import date
+from typing import cast
 
 import pandas as pd
 import plotly.express as px
@@ -220,16 +221,16 @@ def _transaction_list_markup(
 ) -> str:
     display = frame.sort_values("transaction_date", ascending=False)
     if focused_transaction_id:
-        focused = display["id"].astype(str).eq(focused_transaction_id)
-        display = pd.concat([display.loc[focused], display.loc[~focused]])
+        focused_mask = display["id"].astype(str).eq(focused_transaction_id)
+        display = pd.concat([display.loc[focused_mask], display.loc[~focused_mask]])
     if limit:
         display = display.head(limit)
     rows: list[str] = []
     for item in display.to_dict("records"):
         transaction_id = str(item.get("id", ""))
         focused = transaction_id == focused_transaction_id
-        row_class = "transaction-row is-focused" if focused else "transaction-row"
-        focus_attributes = (
+        row_class: str = "transaction-row is-focused" if focused else "transaction-row"
+        focus_attributes: str = (
             f' id="transaction-{html.escape(transaction_id, quote=True)}"'
             ' data-jizhang-transaction-focus="true" tabindex="-1"'
             if focused
@@ -711,7 +712,7 @@ def _category_options(database: Database, config: AppConfig) -> list[str]:
 def _get_transaction(database: Database, transaction_id: str) -> dict[str, object] | None:
     transaction_reader = getattr(database, "get_transaction", None)
     if transaction_reader is not None:
-        return transaction_reader(transaction_id)
+        return cast("dict[str, object] | None", transaction_reader(transaction_id))
     return next(
         (row for row in database.list_transactions() if str(row.get("id", "")) == transaction_id),
         None,
@@ -1110,13 +1111,13 @@ def _render_insights(database: Database, frame: pd.DataFrame) -> None:
     with first:
         _kpi_card(
             "Recorded income",
-            _currency(float(savings["income"])),
+            _currency(savings["income"] or 0.0),
             detail="In the selected range",
         )
     with second:
         _kpi_card(
             "Net outflow",
-            _currency(float(savings["net_outflow"])),
+            _currency(savings["net_outflow"] or 0.0),
             detail="Expenses after refunds",
         )
     with third:

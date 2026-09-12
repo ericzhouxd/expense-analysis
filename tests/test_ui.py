@@ -149,8 +149,10 @@ def test_hot_reloaded_database_supports_category_and_transaction_lookups(tmp_pat
     )
     cached_database = CachedDatabaseProxy(database)
 
-    assert "New category" in _category_options(cached_database, AppConfig())
-    assert _get_transaction(cached_database, transaction_id)["description"] == "Synthetic repair"
+    assert "New category" in _category_options(cached_database, AppConfig())  # type: ignore[arg-type]
+    transaction = _get_transaction(cached_database, transaction_id)  # type: ignore[arg-type]
+    assert transaction is not None
+    assert transaction["description"] == "Synthetic repair"
 
 
 def test_transactions_page_opens_dialog_and_reveals_saved_transaction(tmp_path, monkeypatch):
