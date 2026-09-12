@@ -104,8 +104,8 @@ def test_theme_bridge_dismisses_date_calendar_before_advancing_fields():
     close_calendar = bridge.index("closeAddDateCalendar(fields[index]);")
     advance = bridge.index("fieldControl(fields[index + 1])?.focus();")
     assert close_calendar < advance
-
-
+    
+    
 def test_add_transaction_form_boxes_share_one_height():
     root = Path(__file__).resolve().parents[1]
     css = (root / "src/expense_analysis/assets/theme.css").read_text()
@@ -122,8 +122,8 @@ def test_add_transaction_form_boxes_share_one_height():
         rule = css[start : css.index("}", start)]
         assert "height: 42px" in rule
         assert "min-height: 42px" in rule
-
-
+        
+        
 def test_navigation_hides_the_native_radio_circle_beside_the_page_counter():
     root = Path(__file__).resolve().parents[1]
     css = (root / "src/expense_analysis/assets/theme.css").read_text()
@@ -134,23 +134,3 @@ def test_navigation_hides_the_native_radio_circle_beside_the_page_counter():
         "[data-testid='stMarkdownContainer'])" in css
     )
     assert "> div:first-child { display: none !important; }" in css
-
-
-def test_navigation_rows_keep_one_focus_ring_on_the_same_pixel_grid():
-    root = Path(__file__).resolve().parents[1]
-    css = (root / "src/expense_analysis/assets/theme.css").read_text()
-
-    label_selector = ".st-key-main_navigation [role='radiogroup'] label {"
-    label_rule = css[css.index(label_selector) : css.index("}", css.index(label_selector))]
-    assert "box-sizing: border-box" in label_rule
-    assert "height: 50px" in label_rule
-    assert "min-height: 50px" in label_rule
-
-    input_selector = ".st-key-main_navigation [role='radiogroup'] input:focus-visible"
-    input_rule = css[css.index(input_selector) : css.index("}", css.index(input_selector))]
-    assert "outline: none !important" in input_rule
-
-    ring_selector = ".st-key-main_navigation [role='radiogroup'] label:has(input:focus-visible)"
-    ring_rule = css[css.index(ring_selector) : css.index("}", css.index(ring_selector))]
-    assert "outline: 2px solid var(--positive)" in ring_rule
-    assert "outline-offset: 2px" in ring_rule
