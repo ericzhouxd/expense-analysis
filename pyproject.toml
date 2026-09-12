@@ -18,7 +18,7 @@ expense-export = "expense_analysis.cli:export_main"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.4,<9",
+    "pytest>=8.4,<10",
     "ruff>=0.12,<1",
 ]
 
