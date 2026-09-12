@@ -255,12 +255,16 @@ def render_add_transaction_for_test(database):
 
 
 def test_add_transaction_dialog_invalidates_activity_filters(tmp_path, monkeypatch):
-    from expense_analysis import ui
+    from expense_analysis.ui import transactions
 
     database = Database(tmp_path / "invalidated.sqlite3")
     database.initialize()
     invalidations = []
-    monkeypatch.setattr(ui, "_invalidate_activity_filters", lambda: invalidations.append(True))
+    # The dialog reads this name from its own module, so patch it where it lives
+    # rather than on the package facade.
+    monkeypatch.setattr(
+        transactions, "_invalidate_activity_filters", lambda: invalidations.append(True)
+    )
 
     app = AppTest.from_function(render_add_transaction_for_test, args=(database,)).run(timeout=30)
     next(field for field in app.text_input if field.label == "Description").set_value(
