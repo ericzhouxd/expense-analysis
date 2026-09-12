@@ -13,9 +13,10 @@ computes. They need Chromium, so they are excluded from the default run:
 
     uv run pytest -m rendered
 
-Point ``EXPECT_CHROMIUM`` at a binary if ``chromium`` is not on ``PATH``. The
-throwaway directory is supplied through ``EXPENSE_ANALYSIS_DATA_DIR``, so a run
-never opens the real ledger.
+Point ``EXPECT_CHROMIUM`` at a binary if ``chromium`` is not on ``PATH``; when it
+is set, a missing browser fails the run instead of skipping it. The throwaway
+directory is supplied through ``EXPENSE_ANALYSIS_DATA_DIR``, so a run never opens
+the real ledger.
 """
 
 from __future__ import annotations
@@ -244,11 +245,14 @@ class Cdp:
 
 def _find_chromium() -> str:
     override = os.environ.get("EXPECT_CHROMIUM")
-    candidates = (override, *CHROMIUM_CANDIDATES) if override else CHROMIUM_CANDIDATES
-    for candidate in candidates:
+    for candidate in (override, *CHROMIUM_CANDIDATES) if override else CHROMIUM_CANDIDATES:
         found = shutil.which(candidate)
         if found:
             return found
+    if override:
+        # CI sets EXPECT_CHROMIUM precisely so a missing browser fails the run
+        # instead of quietly turning the checks into a no-op.
+        pytest.fail(f"EXPECT_CHROMIUM={override!r} does not point at an executable browser")
     pytest.skip("no Chromium binary found; set EXPECT_CHROMIUM to run the rendered checks")
 
 
