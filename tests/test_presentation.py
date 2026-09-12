@@ -104,8 +104,8 @@ def test_theme_bridge_dismisses_date_calendar_before_advancing_fields():
     close_calendar = bridge.index("closeAddDateCalendar(fields[index]);")
     advance = bridge.index("fieldControl(fields[index + 1])?.focus();")
     assert close_calendar < advance
-    
-    
+
+
 def test_add_transaction_form_boxes_share_one_height():
     root = Path(__file__).resolve().parents[1]
     css = (root / "src/expense_analysis/assets/theme.css").read_text()
@@ -122,8 +122,8 @@ def test_add_transaction_form_boxes_share_one_height():
         rule = css[start : css.index("}", start)]
         assert "height: 42px" in rule
         assert "min-height: 42px" in rule
-        
-        
+
+
 def test_navigation_hides_the_native_radio_circle_beside_the_page_counter():
     root = Path(__file__).resolve().parents[1]
     css = (root / "src/expense_analysis/assets/theme.css").read_text()
@@ -134,3 +134,31 @@ def test_navigation_hides_the_native_radio_circle_beside_the_page_counter():
         "[data-testid='stMarkdownContainer'])" in css
     )
     assert "> div:first-child { display: none !important; }" in css
+
+
+def test_sidebar_nav_and_appearance_control_share_one_content_grid():
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "src/expense_analysis/assets/theme.css").read_text()
+
+    def rule(selector):
+        start = css.index(selector)
+        return css[start : css.index("}", start)]
+
+    assert "--sidebar-gap: 8px" in css
+
+    # The nav list fills the sidebar content box so its edges match the divider
+    # and the Appearance control below it.
+    assert "width: 100%" in rule(".st-key-main_navigation {")
+    nav_group = rule(".st-key-main_navigation [role='radiogroup'] {")
+    assert "width: 100%" in nav_group
+
+    # One gap token drives the nav list, the label row, and the button row.
+    assert "gap: var(--sidebar-gap)" in nav_group
+    assert "gap: var(--sidebar-gap)" in rule(".theme-control {")
+    assert "gap: var(--sidebar-gap)" in rule(".theme-options {")
+
+    # Selection marks the button in place instead of shifting it or narrowing
+    # the gap to its neighbour.
+    selected = rule(".theme-options button[aria-checked='true'] {")
+    assert "box-shadow: inset 2px 2px 0" in selected
+    assert "box-shadow: 2px 2px 0" not in selected

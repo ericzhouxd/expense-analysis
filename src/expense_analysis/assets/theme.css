@@ -15,6 +15,7 @@
   --dot: #10160b;
   --ui-font: 'Departure Mono', monospace;
   --number-font: 'Anton', Impact, sans-serif;
+  --sidebar-gap: 8px;
   --metal: repeating-linear-gradient(0deg, #fff2 0px, #0001 .7px, #fff0 1.2px, #0000 3px),
     repeating-linear-gradient(178deg, #0000 0px, #00000008 1px, #ffffff18 2px, #0000 5px),
     linear-gradient(102deg, var(--metal-low) 0%, var(--metal-high) 29%,
@@ -79,7 +80,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible,
   font-size: 42px; letter-spacing: .035em; line-height: 1.2; }
 .privacy-dot { content: ''; display: inline-block;
   width: 9px; height: 9px; background: var(--accent); border: 1px solid #151713; }
-.st-key-main_navigation [role='radiogroup'] { gap: 3px; counter-reset: page; }
+.st-key-main_navigation { width: 100%; }
+.st-key-main_navigation [role='radiogroup'] { gap: var(--sidebar-gap); counter-reset: page; width: 100%; }
 .st-key-main_navigation [role='radiogroup'] label {
   display: flex !important; align-items: center;
   counter-increment: page; padding: 11px 10px !important; margin: 0 !important;
@@ -96,16 +98,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible,
 .st-key-main_navigation [role='radiogroup'] label:hover { border-color: var(--positive); }
 .st-key-main_navigation [role='radiogroup'] label p { font-size: 11px; line-height: 1.35;
   text-transform: uppercase; letter-spacing: .08em; }
-.theme-control { display: grid; gap: 8px; color: var(--ink); }
+.theme-control { display: grid; gap: var(--sidebar-gap); color: var(--ink); }
 .theme-control-label { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; }
-.theme-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; }
+.theme-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sidebar-gap); }
 .theme-options button { min-width: 0; min-height: 34px; padding: 6px 4px;
   border: 1px solid var(--line); color: var(--ink); background: var(--panel);
   font-size: 11px; line-height: 1.3; text-transform: uppercase; letter-spacing: .06em;
   cursor: pointer; }
 .theme-options button:hover { border-color: var(--positive); }
 .theme-options button[aria-checked='true'] { color: #12160a !important;
-  background: var(--accent); border-color: #12160a; box-shadow: 2px 2px 0 #12160a; }
+  background: var(--accent); border-color: #12160a; box-shadow: inset 2px 2px 0 #12160a; }
 .page-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px;
   border-bottom: 1px solid var(--line); padding: 6px 0 12px; }
 .page-heading h1 { font: 400 22px/1.2 var(--ui-font); text-transform: uppercase;
