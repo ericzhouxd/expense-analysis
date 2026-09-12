@@ -1,0 +1,80 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion.
+
+        > [!WARNING]
+        > Do not include real transactions, account names, or the contents of
+        > `data/`, `output/`, or `config.toml`. Use synthetic examples.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the need or frustration, not just the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you would like to see happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about, or how you work around this today.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the app does this affect?
+      options:
+        - Overview
+        - Transactions
+        - Import / Export
+        - Budgets
+        - Advanced insights
+        - Settings
+        - Sidebar / theme / navigation
+        - CLI (expense-add, expense-analyze, expense-import, expense-export)
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: How large do you think this is?
+      options:
+        - Small (a tweak to existing behaviour)
+        - Medium (a new option or view)
+        - Large (a new subsystem or data model change)
+        - Unsure
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: This is consistent with the local-first, single-user privacy model.
+          required: true
+        - label: I searched existing issues and this is not a duplicate.
+          required: true

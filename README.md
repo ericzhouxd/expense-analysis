@@ -53,8 +53,6 @@ fields, unknown categories, category rules, and duplicate transactions.
 ## Local commands
 
 Switch appearance with **System / Light / Dark** at the bottom of the sidebar.
-After updating from the old design, restart Streamlit once to load the new theme
-configuration and local font serving.
 
 ```bash
 # Add a transaction interactively
@@ -106,3 +104,11 @@ uv run pytest
 ```
 
 All tests use synthetic data and temporary databases.
+
+## License
+
+Released under the [MIT License](LICENSE).
+
+The bundled fonts in `static/fonts/` are third-party works under the SIL Open Font
+License and are not covered by the MIT License above. See
+[static/fonts/README.md](static/fonts/README.md) for the per-font license files.
