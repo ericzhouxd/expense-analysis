@@ -104,3 +104,15 @@ def test_add_transaction_form_boxes_share_one_height():
         rule = css[start : css.index("}", start)]
         assert "height: 42px" in rule
         assert "min-height: 42px" in rule
+        
+        
+def test_navigation_hides_the_native_radio_circle_beside_the_page_counter():
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "src/expense_analysis/assets/theme.css").read_text()
+
+    assert "counter(page, decimal-leading-zero)" in css
+    assert (
+        ".st-key-main_navigation [role='radiogroup'] div:has(> "
+        "[data-testid='stMarkdownContainer'])" in css
+    )
+    assert "> div:first-child { display: none !important; }" in css

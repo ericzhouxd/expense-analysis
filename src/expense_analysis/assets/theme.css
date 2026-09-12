@@ -87,6 +87,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible,
 }
 .st-key-main_navigation [role='radiogroup'] label::before { content: counter(page, decimal-leading-zero);
   font-family: var(--number-font); font-size: 1.15rem; margin-right: 8px; }
+/* The page counter already marks each entry; drop the native radio circle between it and the title. */
+.st-key-main_navigation [role='radiogroup'] div:has(> [data-testid='stMarkdownContainer'])
+  > div:first-child { display: none !important; }
 .st-key-main_navigation [role='radiogroup'] label:has(input:checked) { background: var(--accent); color: #12160a; }
 .st-key-main_navigation [role='radiogroup'] label:has(input:checked) * { color: #12160a !important; }
 .st-key-main_navigation [role='radiogroup'] label:has(input:focus-visible) { outline: 2px solid var(--positive); }
