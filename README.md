@@ -100,10 +100,11 @@ the GitHub repository. Real transactions and generated exports remain local.
 ```bash
 uv run ruff format --check .
 uv run ruff check .
+uv run mypy
 uv run pytest
 ```
 
-The same three commands run in CI on every push and pull request
+The same commands run in CI on every push and pull request
 (`.github/workflows/checks.yml`).
 
 To have them applied automatically before each commit:
@@ -112,9 +113,9 @@ To have them applied automatically before each commit:
 uv run pre-commit install
 ```
 
-The hooks in `.pre-commit-config.yaml` run the same pinned ruff from `uv.lock`
-and additionally refuse to commit `data/`, `output/`, `config.toml`, and
-database or `.env` files.
+The hooks in `.pre-commit-config.yaml` run the same pinned ruff and mypy from
+`uv.lock` and additionally refuse to commit `data/`, `output/`, `config.toml`,
+and database or `.env` files.
 
 All tests use synthetic data and temporary databases.
 

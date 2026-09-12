@@ -17,6 +17,16 @@ repos:
         types_or: [python, pyi]
         require_serial: true
 
+      # Whole-project check: mypy needs the full import graph, so it cannot run
+      # per file.
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        require_serial: true
+
       # .gitignore already excludes these; this stops a stray `git add -f`
       # or a rename from putting real spending data into history.
       - id: no-private-data
