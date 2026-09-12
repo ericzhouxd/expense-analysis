@@ -80,13 +80,6 @@ def test_bulk_import_skips_duplicate(database, draft):
     assert result.duplicates_skipped == 1
 
 
-def test_budget_upsert(database):
-    database.set_budget("2026-07", "Food", 30000)
-    database.set_budget("2026-07", "Food", 35000)
-    budgets = database.get_budgets("2026-07")
-    assert budgets == [{"month": "2026-07", "category": "Food", "amount_cents": 35000}]
-
-
 def test_transaction_search(database, draft):
     database.add_transaction(draft)
     assert len(database.list_transactions(search="grocer")) == 1

@@ -183,7 +183,6 @@ def test_persistence_is_additive_and_roundtrips(plan, tmp_path):
     database = Database(tmp_path / "synthetic.sqlite3")
     database.initialize()
     assert database.get_spending_plan() is None
-    database.set_budget("2026-10", "Food", 30000)
     database.add_transaction(
         TransactionDraft(
             transaction_date=date(2026, 10, 1),
@@ -198,11 +197,42 @@ def test_persistence_is_additive_and_roundtrips(plan, tmp_path):
     database.initialize()
     assert database.get_spending_plan() == plan
     assert database.count_transactions() == 1
-    assert database.get_budgets("2026-10")[0]["amount_cents"] == 30000
     with database.connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
     database.save_spending_plan(replace(plan, buffer_cents=0))
     assert database.get_spending_plan().buffer_cents == 0
+
+
+def test_initialize_drops_the_legacy_budgets_table(tmp_path):
+    database = Database(tmp_path / "legacy.sqlite3")
+    database.initialize()
+
+    # Restore the pre-schema-3 shape: a budgets table holding a row.
+    with database.connect() as connection:
+        connection.execute(
+            """CREATE TABLE budgets (
+                month TEXT NOT NULL,
+                category TEXT NOT NULL,
+                amount_cents INTEGER NOT NULL CHECK (amount_cents >= 0),
+                PRIMARY KEY (month, category)
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO budgets (month, category, amount_cents) VALUES ('2026-07', 'Food', 30000)"
+        )
+        connection.execute("PRAGMA user_version = 2")
+
+    database.initialize()
+
+    with database.connect() as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        tables = {
+            row["name"]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+    assert version == 3
+    assert "budgets" not in tables
+    assert "spending_plans" in tables
 
 
 def test_setup_and_all_pages_use_synthetic_database(plan, tmp_path, monkeypatch):
