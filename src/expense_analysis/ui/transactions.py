@@ -15,7 +15,7 @@ from ..analytics import (
 from ..choices import choice_options
 from ..config import AppConfig
 from ..database import Database, DuplicateTransactionError
-from ..models import TransactionDraft, parse_amount_cents
+from ..models import TransactionDraft, parse_amount_cents, validate_transaction_date
 from ..transaction_edits import TransactionChange, apply_changes, collect_changes
 from .state import (
     _category_options,
@@ -223,7 +223,12 @@ def _add_transaction_dialog(database: Database, config: AppConfig) -> None:
     st.caption("Description and amount are required.")
     with st.form("add_transaction_form", clear_on_submit=True):
         left, right = st.columns(2)
-        transaction_date = left.date_input("Date", value=date.today(), key="add_transaction_date")
+        transaction_date_text = left.text_input(
+            "Date",
+            value=date.today().isoformat(),
+            placeholder="YYYY-MM-DD",
+            key="add_transaction_date",
+        )
         transaction_type = right.selectbox(
             "Type",
             ["expense", "refund", "income", "transfer"],
@@ -286,23 +291,28 @@ def _add_transaction_dialog(database: Database, config: AppConfig) -> None:
         )
     if submitted:
         try:
-            transaction_id = database.add_transaction(
-                TransactionDraft(
-                    transaction_date=transaction_date,
-                    description=description,
-                    amount_cents=parse_amount_cents(amount),
-                    category=category,
-                    account=account,
-                    payment_method=payment_method,
-                    merchant=merchant,
-                    transaction_type=transaction_type,
-                    notes=notes,
-                )
-            )
-        except (ValueError, DuplicateTransactionError) as exc:
+            transaction_date = validate_transaction_date(transaction_date_text)
+        except ValueError as exc:
             st.error(str(exc))
         else:
-            _invalidate_activity_filters()
-            st.session_state["saved_transaction_id"] = transaction_id
-            st.session_state["show_saved_transaction_notice"] = True
-            st.rerun()
+            try:
+                transaction_id = database.add_transaction(
+                    TransactionDraft(
+                        transaction_date=transaction_date,
+                        description=description,
+                        amount_cents=parse_amount_cents(amount),
+                        category=category,
+                        account=account,
+                        payment_method=payment_method,
+                        merchant=merchant,
+                        transaction_type=transaction_type,
+                        notes=notes,
+                    )
+                )
+            except (ValueError, DuplicateTransactionError) as exc:
+                st.error(str(exc))
+            else:
+                _invalidate_activity_filters()
+                st.session_state["saved_transaction_id"] = transaction_id
+                st.session_state["show_saved_transaction_notice"] = True
+                st.rerun()

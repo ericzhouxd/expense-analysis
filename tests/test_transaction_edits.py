@@ -210,3 +210,29 @@ def test_review_cannot_delete_without_acknowledgement(ledger):
     next(b for b in app.button if b.label == "Confirm changes").click().run()
     assert not app.exception
     assert database.get_transaction(identifier) is None
+
+
+def test_unparseable_date_is_reported_as_invalid_not_missing(ledger):
+    _, [(identifier, draft), _] = ledger
+    row = editor_row(identifier, draft)
+    row["Date"] = "2026-02-30"
+    with pytest.raises(ValueError, match="is not a recognised date"):
+        draft_from_editor(pd.Series(row))
+
+
+def test_blank_date_is_reported_as_required(ledger):
+    _, [(identifier, draft), _] = ledger
+    for blank in (None, "", "   "):
+        row = editor_row(identifier, draft)
+        row["Date"] = blank
+        with pytest.raises(ValueError, match="Date is required"):
+            draft_from_editor(pd.Series(row))
+
+
+def test_out_of_range_editor_date_is_rejected(ledger):
+    _, [(identifier, draft), _] = ledger
+    for value in (date(1899, 12, 31), "2099-01-01"):
+        row = editor_row(identifier, draft)
+        row["Date"] = value
+        with pytest.raises(ValueError, match="Date must be between"):
+            draft_from_editor(pd.Series(row))

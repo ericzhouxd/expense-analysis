@@ -61,7 +61,7 @@ THEME_CHOICES = "[data-jizhang-theme-choice]"
 # Exactly the selectors theme.css sizes, so a passing check means the rule reached
 # the rendered control rather than merely existing in the stylesheet.
 FORM_SELECTORS = {
-    "date": ".st-key-add_transaction_date [data-testid='stDateInputField']",
+    "date": ".st-key-add_transaction_date [data-testid='stTextInputRootElement']",
     "description": ".st-key-add_transaction_description [data-testid='stTextInputRootElement']",
     "merchant": ".st-key-add_transaction_merchant [data-testid='stTextInputRootElement']",
     "amount": ".st-key-add_transaction_amount [data-testid='stNumberInputContainer']",
