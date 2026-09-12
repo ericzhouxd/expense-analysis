@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "pandas>=2.3,<4",
-    "plotly>=6.2,<7",
+    "plotly>=6.2,<8",
     "streamlit>=1.60,<2",
 ]
 
