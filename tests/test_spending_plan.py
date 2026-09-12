@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -8,6 +9,8 @@ from expense_analysis.database import Database
 from expense_analysis.models import TransactionDraft
 from expense_analysis.spending_plan import Commitment, SpendingPlan, calculate_plan, split_cents
 from expense_analysis.university_presets import ucla_benchmark
+
+APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
 
 @pytest.fixture
@@ -212,7 +215,7 @@ def test_setup_and_all_pages_use_synthetic_database(plan, tmp_path, monkeypatch)
     database.initialize()
     monkeypatch.setattr(ui, "_database", lambda: database)
     monkeypatch.setattr(ui, "load_config", AppConfig)
-    app = AppTest.from_file("app.py").run()
+    app = AppTest.from_file(APP_PATH).run()
     app.radio[0].set_value("Budgets").run()
     assert not app.exception
     assert database.get_spending_plan() is None
@@ -235,7 +238,7 @@ def test_setup_and_all_pages_use_synthetic_database(plan, tmp_path, monkeypatch)
         )
     )
     # A fresh session also verifies that the saved plan is loaded from SQLite.
-    app = AppTest.from_file("app.py").run()
+    app = AppTest.from_file(APP_PATH).run()
     next(field for field in app.text_input if field.label == "Search").set_value(
         "no matching transaction"
     ).run()
