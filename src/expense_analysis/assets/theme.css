@@ -97,13 +97,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible,
 .st-key-main_navigation [role='radiogroup'] label:has(input:checked) * { color: #12160a !important; }
 /* Keep the native radio itself ring-free: it is visually hidden, and its own
    focus ring is a second, mismatched box next to the page number. */
+.st-key-main_navigation [role='radiogroup'] input:focus,
 .st-key-main_navigation [role='radiogroup'] input:focus-visible { outline: none !important; }
-/* Draw a single keyboard/click focus ring outside the fill so it never clips
-   the selected highlight. */
-.st-key-main_navigation [role='radiogroup'] label:has(input:focus-visible) {
-  outline: 2px solid var(--positive); outline-offset: 2px;
-}
 .st-key-main_navigation [role='radiogroup'] label:hover { border-color: var(--positive); }
+/* The lime fill alone marks the selected tab, so selection never shifts with
+   focus. Draw a single ring outside the fill for keyboard users only; the
+   bridge flags the last input method as data-jizhang-input. The border is
+   cleared while focused so hover cannot stack a second ring inside it. */
+:root[data-jizhang-input='keyboard']
+  .st-key-main_navigation [role='radiogroup'] label:has(input:focus) {
+  outline: 2px solid var(--positive); outline-offset: 2px;
+  border-color: transparent;
+}
 .st-key-main_navigation [role='radiogroup'] label p { font-size: 11px; line-height: 1.35;
   text-transform: uppercase; letter-spacing: .08em; }
 .theme-control { display: grid; gap: 8px; color: var(--ink); }

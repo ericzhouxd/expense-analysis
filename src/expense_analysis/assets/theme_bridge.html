@@ -10,7 +10,24 @@
     document.removeEventListener('keydown', window.jizhangUiKeyHandler);
     document.removeEventListener('keydown', window.jizhangUiKeyHandler, true);
   }
+  if (window.jizhangInputModalityKeyHandler) {
+    document.removeEventListener('keydown', window.jizhangInputModalityKeyHandler, true);
+  }
+  if (window.jizhangInputModalityPointerHandler) {
+    document.removeEventListener('pointerdown', window.jizhangInputModalityPointerHandler, true);
+  }
   let pending = false;
+  // Track the last input method so CSS can show the sidebar focus ring for
+  // keyboard users only; mouse clicks on a radio otherwise match :focus-visible.
+  const setInputModality = (modality) => {
+    if (document.documentElement.dataset.jizhangInput !== modality) {
+      document.documentElement.dataset.jizhangInput = modality;
+    }
+  };
+  const handleInputModalityKey = (event) => {
+    if (event.key === 'Tab') setInputModality('keyboard');
+  };
+  const handleInputModalityPointer = () => setInputModality('pointer');
   const syncThemeChoices = () => {
     const selected = window.jizhangThemeChoice || 'System';
     document.querySelectorAll('[data-jizhang-theme-choice]').forEach((control) => {
@@ -216,8 +233,12 @@
   };
   document.addEventListener('click', handleUiClick);
   document.addEventListener('keydown', handleUiKey, true);
+  document.addEventListener('keydown', handleInputModalityKey, true);
+  document.addEventListener('pointerdown', handleInputModalityPointer, true);
   window.jizhangUiClickHandler = handleUiClick;
   window.jizhangUiKeyHandler = handleUiKey;
+  window.jizhangInputModalityKeyHandler = handleInputModalityKey;
+  window.jizhangInputModalityPointerHandler = handleInputModalityPointer;
   const observer = new MutationObserver(() => {
     if (!pending) { pending = true; requestAnimationFrame(sync); }
   });

@@ -139,6 +139,7 @@ def test_navigation_hides_the_native_radio_circle_beside_the_page_counter():
 def test_navigation_rows_keep_one_focus_ring_on_the_same_pixel_grid():
     root = Path(__file__).resolve().parents[1]
     css = (root / "src/expense_analysis/assets/theme.css").read_text()
+    bridge = (root / "src/expense_analysis/assets/theme_bridge.html").read_text()
 
     label_selector = ".st-key-main_navigation [role='radiogroup'] label {"
     label_rule = css[css.index(label_selector) : css.index("}", css.index(label_selector))]
@@ -150,7 +151,18 @@ def test_navigation_rows_keep_one_focus_ring_on_the_same_pixel_grid():
     input_rule = css[css.index(input_selector) : css.index("}", css.index(input_selector))]
     assert "outline: none !important" in input_rule
 
-    ring_selector = ".st-key-main_navigation [role='radiogroup'] label:has(input:focus-visible)"
+    # The ring is keyboard-only, so a mouse click cannot add a second box or
+    # change the selected highlight, and it clears the hover border.
+    ring_selector = (
+        ":root[data-jizhang-input='keyboard']\n"
+        "  .st-key-main_navigation [role='radiogroup'] label:has(input:focus)"
+    )
     ring_rule = css[css.index(ring_selector) : css.index("}", css.index(ring_selector))]
     assert "outline: 2px solid var(--positive)" in ring_rule
     assert "outline-offset: 2px" in ring_rule
+    assert "border-color: transparent" in ring_rule
+
+    assert "dataset.jizhangInput" in bridge
+    assert "handleInputModalityKey" in bridge
+    assert "handleInputModalityPointer" in bridge
+    assert "window.jizhangInputModalityKeyHandler = handleInputModalityKey;" in bridge
