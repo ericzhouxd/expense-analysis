@@ -1,8 +1,10 @@
 import csv
 import io
 
+import pytest
+
 from expense_analysis.config import AppConfig
-from expense_analysis.import_export import export_csv, preview_csv
+from expense_analysis.import_export import CsvDecodeError, export_csv, preview_csv
 
 
 def test_legacy_csv_import_quotes_commas_and_classifies_refund():
@@ -65,3 +67,34 @@ def test_export_uses_real_csv_quoting():
     parsed = list(csv.DictReader(io.StringIO(exported.decode())))
     assert parsed[0]["Description"] == "Lunch, coffee"
     assert parsed[0]["Amount"] == "12.50"
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "cp1252", "utf-16"])
+def test_import_reads_the_encodings_spreadsheet_exports_use(encoding):
+    text = "Description,Date,Amount,Category\nCafé purchase,2026-07-30,4.25,Dining Out\n"
+    preview = preview_csv(text.encode(encoding), AppConfig())
+
+    assert preview.invalid_count == 0
+    assert len(preview.valid_drafts) == 1
+    assert preview.valid_drafts[0].description == "Café purchase"
+
+
+def test_import_falls_back_when_cp1252_cannot_map_a_byte():
+    # 0x81 is undefined in cp1252, so this only decodes via the latin-1 fallback.
+    text = "Description,Date,Amount,Category\nOdd\x81 name,2026-07-30,4.25,Dining Out\n"
+    preview = preview_csv(text.encode("latin-1"), AppConfig())
+
+    assert len(preview.valid_drafts) == 1
+
+
+def test_binary_file_reports_a_readable_error():
+    # Decodes as utf-8, but the NUL means it is not a text CSV.
+    content = b"PK\x03\x04\x00\x00binary spreadsheet data"
+    with pytest.raises(CsvDecodeError, match="Re-export it as CSV"):
+        preview_csv(content, AppConfig())
+
+
+def test_non_utf8_file_no_longer_raises_a_decode_error():
+    content = "Description,Date,Amount\nCafé,2026-07-30,4.25\n".encode("cp1252")
+    preview = preview_csv(content, AppConfig())
+    assert len(preview.valid_drafts) == 1

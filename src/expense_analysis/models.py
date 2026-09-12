@@ -19,29 +19,44 @@ def parse_date(value: date | datetime | str) -> date:
     if isinstance(value, date):
         return value
 
-    cleaned = str(value).strip().strip("\"'")
+    if value is None:
+        raise ValueError("Date is required")
+
+    cleaned = str(value).strip().strip("\"'").strip()
+    if not cleaned:
+        raise ValueError("Date is required")
     for date_format in DATE_FORMATS:
         try:
             return datetime.strptime(cleaned, date_format).date()
         except ValueError:
             continue
-    raise ValueError(f"Unsupported date: {value!r}")
+    raise ValueError(f"Date {cleaned!r} is not a recognised date (try YYYY-MM-DD)")
 
 
 def parse_amount_cents(value: Any) -> int:
     if isinstance(value, bool):
-        raise ValueError("Amount must be numeric")
+        raise ValueError("Amount must be a number")
     if isinstance(value, int):
         return value * 100
 
-    cleaned = str(value).strip().strip("\"'")
+    if value is None:
+        raise ValueError("Amount is required")
+
+    cleaned = str(value).strip().strip("\"'").strip()
+    if not cleaned:
+        raise ValueError("Amount is required")
+
     negative_parentheses = cleaned.startswith("(") and cleaned.endswith(")")
     cleaned = cleaned.removeprefix("(").removesuffix(")")
     cleaned = re.sub(r"[$,\s]", "", cleaned)
+    if not cleaned:
+        raise ValueError("Amount is required")
     try:
         amount = Decimal(cleaned)
     except InvalidOperation as exc:
-        raise ValueError(f"Invalid amount: {value!r}") from exc
+        raise ValueError(f"Amount {cleaned!r} is not a number") from exc
+    if not amount.is_finite():
+        raise ValueError(f"Amount {cleaned!r} is not a number")
     if negative_parentheses:
         amount = -amount
     return int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))

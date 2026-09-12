@@ -48,3 +48,37 @@ def test_transaction_requires_positive_amount():
             amount_cents=0,
             category="Food",
         ).validated()
+
+
+@pytest.mark.parametrize("value", [None, "", "   ", '"  "'])
+def test_missing_date_says_it_is_required(value):
+    with pytest.raises(ValueError, match="^Date is required$"):
+        parse_date(value)
+
+
+@pytest.mark.parametrize("value", [None, "", "   ", "$$", "()"])
+def test_missing_amount_says_it_is_required(value):
+    with pytest.raises(ValueError, match="^Amount is required$"):
+        parse_amount_cents(value)
+
+
+@pytest.mark.parametrize("value", ["13/45/2026", "not a date", "2026-13-01"])
+def test_unparseable_date_message_is_written_for_users(value):
+    with pytest.raises(ValueError) as error:
+        parse_date(value)
+    message = str(error.value)
+    assert value in message
+    assert "None" not in message
+    assert "recognised date" in message
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["abc", float("nan"), float("inf"), float("-inf"), "nan", "Infinity"],
+)
+def test_unparseable_amount_message_is_written_for_users(value):
+    with pytest.raises(ValueError) as error:
+        parse_amount_cents(value)
+    message = str(error.value)
+    assert "is not a number" in message
+    assert "None" not in message
