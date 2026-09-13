@@ -25,7 +25,12 @@ app.py
 ```
 
 - `app.py` is the Streamlit entry point.
-- `ui.py` renders pages and translates UI actions into database operations.
+- `ui/` holds the pages. `ui/__init__.py` keeps `render_app` beside the
+  `_database` and `load_config` names it reads, so tests can replace either
+  through the package; `ui/theme.py` holds the palette, `ui/widgets.py` the
+  presentational helpers, `ui/state.py` the activity filters and small data
+  lookups, and one module per page. Only the `ui/` modules import Streamlit for
+  layout.
 - `database.py` owns SQLite schema creation and persistence.
 - `transaction_edits.py` validates table edits and saves reviewed batches in one
   SQLite transaction, checking duplicates and changes since the editor snapshot.
