@@ -103,6 +103,19 @@ uv run ruff check .
 uv run pytest
 ```
 
+The same three commands run in CI on every push and pull request
+(`.github/workflows/checks.yml`).
+
+To have them applied automatically before each commit:
+
+```bash
+uv run pre-commit install
+```
+
+The hooks in `.pre-commit-config.yaml` run the same pinned ruff from `uv.lock`
+and additionally refuse to commit `data/`, `output/`, `config.toml`, and
+database or `.env` files.
+
 All tests use synthetic data and temporary databases.
 
 ## License

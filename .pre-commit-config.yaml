@@ -1,0 +1,35 @@
+# Hooks run through uv so the ruff pinned in uv.lock is used, rather than a
+# second copy downloaded into pre-commit's own environment.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      # .gitignore already excludes these; this stops a stray `git add -f`
+      # or a rename from putting real spending data into history.
+      - id: no-private-data
+        name: no private financial data
+        entry: >-
+          bash -c 'status=0;
+          for f in "$@"; do
+          case "$f" in
+          data/*|output/*|*.sqlite|*.sqlite3|*.db|config.toml|.env|.env.*)
+          echo "refusing to commit private file -> $f" >&2; status=1;;
+          esac;
+          done;
+          exit $status' --
+        language: system
+        pass_filenames: true
+        always_run: true
