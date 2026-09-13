@@ -25,6 +25,22 @@ from .state import (
 )
 from .widgets import _currency, _page_heading, _transaction_list
 
+# Glide renders a fixed 35px row under roughly 48px of header and toolbar, so a
+# constant height either leaves blank space or pushes the actions off-screen.
+_EDITOR_ROW_HEIGHT = 35
+_EDITOR_CHROME_HEIGHT = 48
+
+
+def _editor_height(row_count: int) -> int:
+    return max(200, min(520, _EDITOR_CHROME_HEIGHT + _EDITOR_ROW_HEIGHT * row_count))
+
+
+def _reveal_saved_transaction(transaction_id: str) -> None:
+    """Widget callbacks run before the script, so the view switcher can be reset."""
+    st.session_state["focused_transaction_id"] = transaction_id
+    st.session_state["show_saved_transaction_notice"] = False
+    st.session_state["transaction_view"] = "List"
+
 
 @st.dialog("Review transaction changes", width="large")
 def _review_transaction_changes(database: Database, changes: list[TransactionChange]) -> None:
@@ -73,12 +89,37 @@ def _review_transaction_changes(database: Database, changes: list[TransactionCha
 
 
 def _render_transactions(database: Database, frame: pd.DataFrame, config: AppConfig) -> None:
-    heading, add_action = st.columns((5, 1), vertical_alignment="bottom", gap="large")
+    focused_transaction_id = st.session_state.get("focused_transaction_id")
+    if focused_transaction_id:
+        focused_row = _get_transaction(database, focused_transaction_id)
+        if focused_row:
+            focused_frame = transactions_frame([focused_row], config)
+            frame = (
+                pd.concat([focused_frame, frame], ignore_index=True)
+                .drop_duplicates(subset="id", keep="first")
+                .reset_index(drop=True)
+            )
+
+    heading, view_control, add_action = st.columns(
+        (4, 1.1, 1.1), vertical_alignment="bottom", gap="large"
+    )
     with heading:
         _page_heading(
             "ACTIVITY",
             "Transactions",
             "Browse comfortably or switch to the editing table when you need it.",
+        )
+    with view_control:
+        view = (
+            st.segmented_control(
+                "Transaction view",
+                ["List", "Edit table"],
+                default="List",
+                label_visibility="collapsed",
+                key="transaction_view",
+            )
+            if not frame.empty
+            else "List"
         )
     with add_action:
         if st.button(
@@ -92,49 +133,29 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
     saved_transaction_id = st.session_state.get("saved_transaction_id")
     if saved_transaction_id and st.session_state.get("show_saved_transaction_notice"):
         _, notice_column = st.columns((4, 2))
-        with notice_column:
-            notice = st.empty()
-            with notice.container(
+        with (
+            notice_column,
+            st.container(
                 border=True,
                 key="saved_transaction_notice",
                 horizontal=True,
                 horizontal_alignment="right",
                 vertical_alignment="center",
                 gap="small",
-            ):
-                st.markdown("**Transaction saved.**")
-                view_saved = st.button(
-                    "View",
-                    key="view_saved_transaction",
-                    type="tertiary",
-                )
-            if view_saved:
-                st.session_state["focused_transaction_id"] = saved_transaction_id
-                st.session_state["show_saved_transaction_notice"] = False
-                st.session_state["transaction_view"] = "List"
-                notice.empty()
-
-    focused_transaction_id = st.session_state.get("focused_transaction_id")
-    if focused_transaction_id:
-        focused_row = _get_transaction(database, focused_transaction_id)
-        if focused_row:
-            focused_frame = transactions_frame([focused_row], config)
-            frame = (
-                pd.concat([focused_frame, frame], ignore_index=True)
-                .drop_duplicates(subset="id", keep="first")
-                .reset_index(drop=True)
+            ),
+        ):
+            st.markdown("**Transaction saved.**")
+            st.button(
+                "View",
+                key="view_saved_transaction",
+                type="tertiary",
+                on_click=_reveal_saved_transaction,
+                args=(saved_transaction_id,),
             )
+
     if frame.empty:
         st.info("No transactions match the current filters.")
         return
-
-    view = st.segmented_control(
-        "Transaction view",
-        ["List", "Edit table"],
-        default="List",
-        label_visibility="collapsed",
-        key="transaction_view",
-    )
     if view == "List":
         _transaction_list(frame, focused_transaction_id=focused_transaction_id)
         return
@@ -170,12 +191,11 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
     display_frame = editor_frame.copy(deep=True)
     for column in choice_columns:
         display_frame[column] = display_frame[column].map(lambda value: [value] if value else [])
-    st.caption("Category, account and payment method: remove the current choice to replace it.")
     edited = st.data_editor(
         display_frame,
         hide_index=True,
         width="stretch",
-        height=520,
+        height=_editor_height(len(editor_frame)),
         disabled=["ID"],
         column_config={
             "Delete": st.column_config.CheckboxColumn("Delete"),
@@ -191,7 +211,8 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
                     options=choice_options(database, config, kind),
                     accept_new_options=True,
                     required=column == "Category",
-                    help="Choose one value. Type a new value and press Enter to confirm it.",
+                    help="Remove the current choice to replace it. "
+                    "Type a new value and press Enter to confirm it.",
                 )
                 for column, kind in choice_columns.items()
             },
@@ -208,12 +229,15 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
         changes = collect_changes(display_frame, edited)
     except ValueError as exc:
         st.error(str(exc))
-    review_column, discard_column = st.columns(2)
+    _, review_column, discard_column = st.columns((4, 1.3, 1.3), vertical_alignment="center")
     if review_column.button(
-        f"Review changes ({len(changes)})", type="primary", disabled=not changes
+        f"Review changes ({len(changes)})",
+        type="primary",
+        disabled=not changes,
+        width="stretch",
     ):
         _review_transaction_changes(database, changes)
-    if discard_column.button("Discard edits / reload"):
+    if discard_column.button("Discard edits / reload", width="stretch"):
         _reset_transaction_editor()
         st.rerun()
 
