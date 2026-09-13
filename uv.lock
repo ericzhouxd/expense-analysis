@@ -133,6 +133,9 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+rendered = [
+    { name = "websockets" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -149,6 +152,7 @@ dev = [
     { name = "pytest", specifier = ">=8.4,<10" },
     { name = "ruff", specifier = ">=0.12,<1" },
 ]
+rendered = [{ name = "websockets", specifier = ">=15,<17" }]
 
 [[package]]
 name = "filelock"

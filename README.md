@@ -107,6 +107,17 @@ uv run pytest
 The same commands run in CI on every push and pull request
 (`.github/workflows/checks.yml`).
 
+The browser-driven geometry checks are separate because they need Chromium and
+boot the real app:
+
+```bash
+uv run pytest -m rendered
+```
+
+They measure the rendered sidebar and the add-transaction form over the Chrome
+DevTools Protocol, so they catch layout regressions that reading `theme.css` as
+text cannot. `uv run pytest` deselects them.
+
 To have them applied automatically before each commit:
 
 ```bash

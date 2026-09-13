@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from datetime import date
@@ -7,8 +8,10 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
-OUTPUT_DIR = PROJECT_ROOT / "output"
+# Overridable so a check can run against a throwaway directory instead of the
+# real ledger. Nothing else in the app reads these variables.
+DATA_DIR = Path(os.environ.get("EXPENSE_ANALYSIS_DATA_DIR", PROJECT_ROOT / "data"))
+OUTPUT_DIR = Path(os.environ.get("EXPENSE_ANALYSIS_OUTPUT_DIR", PROJECT_ROOT / "output"))
 DATABASE_PATH = DATA_DIR / "expenses.sqlite3"
 LOCAL_CONFIG_PATH = PROJECT_ROOT / "config.toml"
 

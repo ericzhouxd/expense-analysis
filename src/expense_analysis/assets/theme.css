@@ -79,6 +79,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible,
   font-size: 42px; letter-spacing: .035em; line-height: 1.2; }
 .privacy-dot { content: ''; display: inline-block;
   width: 9px; height: 9px; background: var(--accent); border: 1px solid #151713; }
+.st-key-main_navigation { width: 100%; }
 .st-key-main_navigation [role='radiogroup'] { gap: 3px; counter-reset: page; }
 .st-key-main_navigation [role='radiogroup'] label {
   display: flex !important; align-items: center;
@@ -92,7 +93,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible,
   > div:first-child { display: none !important; }
 .st-key-main_navigation [role='radiogroup'] label:has(input:checked) { background: var(--accent); color: #12160a; }
 .st-key-main_navigation [role='radiogroup'] label:has(input:checked) * { color: #12160a !important; }
-.st-key-main_navigation [role='radiogroup'] label:has(input:focus-visible) { outline: 2px solid var(--positive); }
+/* The hidden native radio would paint its own ring outside the row (#22). Keep one
+   inset ring on the label instead: it stays visible for keyboard users but never
+   grows the highlighted box the way an outward outline does. */
+.st-key-main_navigation [role='radiogroup'] input:focus-visible { outline: none !important; }
+.st-key-main_navigation [role='radiogroup'] label:has(input:focus-visible) {
+  outline: 2px solid var(--positive); outline-offset: -2px; }
 .st-key-main_navigation [role='radiogroup'] label:hover { border-color: var(--positive); }
 .st-key-main_navigation [role='radiogroup'] label p { font-size: 11px; line-height: 1.35;
   text-transform: uppercase; letter-spacing: .08em; }
@@ -264,7 +270,7 @@ h1, h2, h3 { font-family: var(--ui-font); }
 .st-key-add_transaction_merchant input,
 .st-key-add_transaction_amount input,
 .st-key-add_transaction_notes textarea { padding: 10px 12px !important; }
-.st-key-add_transaction_date [data-baseweb='input'],
+.st-key-add_transaction_date [data-testid='stDateInputField'],
 .st-key-add_transaction_description [data-testid='stTextInputRootElement'],
 .st-key-add_transaction_merchant [data-testid='stTextInputRootElement'],
 .st-key-add_transaction_amount [data-testid='stNumberInputContainer'] {

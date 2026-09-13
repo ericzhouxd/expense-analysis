@@ -111,7 +111,7 @@ def test_add_transaction_form_boxes_share_one_height():
     css = (root / "src/expense_analysis/assets/theme.css").read_text()
 
     for selector in (
-        ".st-key-add_transaction_date [data-baseweb='input']",
+        ".st-key-add_transaction_date [data-testid='stDateInputField']",
         ".st-key-add_transaction_description [data-testid='stTextInputRootElement']",
         ".st-key-add_transaction_merchant [data-testid='stTextInputRootElement']",
         ".st-key-add_transaction_amount [data-testid='stNumberInputContainer']",

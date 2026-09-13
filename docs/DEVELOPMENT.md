@@ -207,6 +207,21 @@ for page in [
 
 Tests must use synthetic data and temporary databases. They must never read or
 copy the real database.
+
+`tests/test_rendered_geometry.py` goes further: it boots the real app against a
+throwaway directory (`EXPENSE_ANALYSIS_DATA_DIR` / `EXPENSE_ANALYSIS_OUTPUT_DIR`)
+and measures the live DOM with a headless Chromium over the Chrome DevTools
+Protocol. It needs Chromium, so `uv run pytest` deselects it:
+
+```bash
+uv run pytest -m rendered
+```
+
+Use it for anything the browser has to decide — box sizes, focus rings, the
+sidebar grid — because the substring checks against `theme.css` in
+`test_presentation.py` cannot see any of that. Two sidebar bugs shipped past
+those checks; both now fail here instead.
+
 The automated all-pages regression in `test_spending_plan.py` injects a temporary
 database and default config. Prefer that test over the manual audit above, which
 opens the locally configured database. The suite covers setup confirmation,
