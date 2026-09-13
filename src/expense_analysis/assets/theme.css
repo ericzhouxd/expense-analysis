@@ -270,7 +270,7 @@ h1, h2, h3 { font-family: var(--ui-font); }
 .st-key-add_transaction_merchant input,
 .st-key-add_transaction_amount input,
 .st-key-add_transaction_notes textarea { padding: 10px 12px !important; }
-.st-key-add_transaction_date [data-baseweb='input'],
+.st-key-add_transaction_date [data-testid='stDateInputField'],
 .st-key-add_transaction_description [data-testid='stTextInputRootElement'],
 .st-key-add_transaction_merchant [data-testid='stTextInputRootElement'],
 .st-key-add_transaction_amount [data-testid='stNumberInputContainer'] {
