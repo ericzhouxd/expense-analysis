@@ -28,7 +28,7 @@ from .budget_ui import render_budget_page
 from .choices import choice_options
 from .config import DATABASE_PATH, AppConfig, load_config
 from .database import Database, DuplicateTransactionError
-from .import_export import ImportPreview, export_csv, preview_csv
+from .import_export import CsvDecodeError, ImportPreview, export_csv, preview_csv
 from .models import TransactionDraft, parse_amount_cents
 from .presentation import inject_theme
 from .spending_plan import calculate_plan
@@ -1027,6 +1027,36 @@ def _preview_table(preview: ImportPreview) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def _render_csv_preview(database: Database, content: bytes, config: AppConfig) -> None:
+    try:
+        preview = preview_csv(content, config, database.existing_fingerprints())
+    except CsvDecodeError as exc:
+        st.error(str(exc))
+        return
+    ready = len(preview.valid_drafts)
+    first, second, third = st.columns(3)
+    first.metric("Ready", ready)
+    second.metric("Duplicates", preview.duplicate_count)
+    third.metric("Invalid", preview.invalid_count)
+    st.dataframe(
+        _preview_table(preview),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Amount": st.column_config.NumberColumn(format="$%.2f"),
+        },
+    )
+    if st.button(
+        f"Import {ready} valid transaction(s)",
+        type="primary",
+        disabled=ready == 0,
+    ):
+        result = database.import_transactions(preview.valid_drafts)
+        _invalidate_activity_filters()
+        st.success(f"Imported {result.imported}; skipped {result.duplicates_skipped} duplicate(s).")
+        st.rerun()
+
+
 def _render_import_export(
     database: Database, rows: list[dict[str, object]], config: AppConfig
 ) -> None:
@@ -1049,31 +1079,7 @@ def _render_import_export(
     import_bytes: bytes | None = uploaded.getvalue() if uploaded else None
 
     if import_bytes:
-        preview = preview_csv(import_bytes, config, database.existing_fingerprints())
-        ready = len(preview.valid_drafts)
-        first, second, third = st.columns(3)
-        first.metric("Ready", ready)
-        second.metric("Duplicates", preview.duplicate_count)
-        third.metric("Invalid", preview.invalid_count)
-        st.dataframe(
-            _preview_table(preview),
-            hide_index=True,
-            width="stretch",
-            column_config={
-                "Amount": st.column_config.NumberColumn(format="$%.2f"),
-            },
-        )
-        if st.button(
-            f"Import {ready} valid transaction(s)",
-            type="primary",
-            disabled=ready == 0,
-        ):
-            result = database.import_transactions(preview.valid_drafts)
-            _invalidate_activity_filters()
-            st.success(
-                f"Imported {result.imported}; skipped {result.duplicates_skipped} duplicate(s)."
-            )
-            st.rerun()
+        _render_csv_preview(database, import_bytes, config)
 
     st.divider()
     _section_heading("Export a local backup", "Keep the downloaded file secure")

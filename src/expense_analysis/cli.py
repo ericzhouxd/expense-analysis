@@ -8,7 +8,7 @@ from pathlib import Path
 from .analytics import period_metrics, savings_summary, transactions_frame
 from .config import OUTPUT_DIR, load_config
 from .database import Database, DuplicateTransactionError
-from .import_export import export_csv, preview_csv
+from .import_export import CsvDecodeError, export_csv, preview_csv
 from .models import TransactionDraft, format_dollars, parse_amount_cents, parse_date
 
 
@@ -104,11 +104,15 @@ def import_main() -> None:
         parser.error(f"CSV does not exist: {arguments.path}")
     database = Database()
     database.initialize()
-    preview = preview_csv(
-        arguments.path.read_bytes(),
-        load_config(),
-        database.existing_fingerprints(),
-    )
+    try:
+        preview = preview_csv(
+            arguments.path.read_bytes(),
+            load_config(),
+            database.existing_fingerprints(),
+        )
+    except CsvDecodeError as exc:
+        print(f"Cannot read {arguments.path}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     print(
         f"{len(preview.valid_drafts)} ready, "
         f"{preview.duplicate_count} duplicates, {preview.invalid_count} invalid."

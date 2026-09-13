@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import csv
 import io
 from dataclasses import dataclass
@@ -7,6 +8,14 @@ from typing import Any
 
 from .config import AppConfig
 from .models import TransactionDraft, parse_amount_cents, parse_date
+
+
+class CsvDecodeError(ValueError):
+    """Raised when an import file cannot be read as text."""
+
+
+_UNREADABLE = "This file is not readable as text. Re-export it as CSV and try again."
+_NOT_TEXT_CSV = "This file does not look like a text CSV. Re-export it as CSV and try again."
 
 
 @dataclass(frozen=True)
@@ -49,12 +58,42 @@ def _value(normalized: dict[str, str], *names: str) -> str:
     return ""
 
 
+def decode_csv(content: bytes) -> str:
+    """Decode CSV bytes using the encodings spreadsheet exports actually use.
+
+    Excel on Windows writes cp1252 and its "Unicode Text" export writes UTF-16,
+    so a strict utf-8 decode rejects files the user reasonably expects to work.
+    """
+    if content.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        try:
+            return content.decode("utf-16")
+        except UnicodeDecodeError as exc:
+            raise CsvDecodeError(_UNREADABLE) from exc
+
+    # Checked before utf-8: a NUL byte survives a utf-8 decode, so a binary file
+    # would otherwise be accepted and parsed as a one-column CSV.
+    if b"\x00" in content:
+        raise CsvDecodeError(_NOT_TEXT_CSV)
+
+    try:
+        return content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+
+    for encoding in ("cp1252", "latin-1"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise CsvDecodeError(_UNREADABLE)
+
+
 def preview_csv(
     content: bytes,
     config: AppConfig,
     existing_fingerprints: set[str] | None = None,
 ) -> ImportPreview:
-    text = content.decode("utf-8-sig")
+    text = decode_csv(content)
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
         return ImportPreview((ImportRow(1, None, ("CSV header is missing",)),))

@@ -30,7 +30,10 @@ app.py
 - `transaction_edits.py` validates table edits and saves reviewed batches in one
   SQLite transaction, checking duplicates and changes since the editor snapshot.
 - `models.py` validates dates, amounts, transaction types, IDs, and fingerprints.
-- `import_export.py` previews and normalizes CSV data.
+- `import_export.py` previews and normalizes CSV data. `decode_csv` accepts
+  UTF-8 (with or without BOM), UTF-16, cp1252, and latin-1, since spreadsheet
+  exports use all four; anything containing NUL bytes is rejected as
+  `CsvDecodeError` rather than parsed as a one-column CSV.
 - `analytics.py` converts database rows into Pandas frames and calculates insights.
 - `config.py` loads safe defaults and the ignored local `config.toml`.
 - `university_presets.py` holds public, dated UCLA reference estimates only.
