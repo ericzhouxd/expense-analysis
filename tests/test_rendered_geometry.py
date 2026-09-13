@@ -281,7 +281,9 @@ def _seed_database(env: dict) -> None:
 @pytest.fixture(scope="module")
 def app_url():
     """Boot the real app on a free port against a throwaway data directory."""
-    with tempfile.TemporaryDirectory(prefix="expense-rendered-") as work:
+    with tempfile.TemporaryDirectory(
+        prefix="expense-rendered-", ignore_cleanup_errors=True
+    ) as work:
         env = {
             **os.environ,
             "EXPENSE_ANALYSIS_DATA_DIR": str(Path(work) / "data"),
@@ -317,6 +319,7 @@ def app_url():
                 server.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 server.kill()
+                server.wait(timeout=15)
 
 
 @pytest.fixture(scope="module")
@@ -324,7 +327,9 @@ def page(app_url):
     """A headless Chromium page parked on the running app."""
     binary = _find_chromium()
     debug_port = _free_port()
-    with tempfile.TemporaryDirectory(prefix="expense-chromium-") as profile:
+    with tempfile.TemporaryDirectory(
+        prefix="expense-chromium-", ignore_cleanup_errors=True
+    ) as profile:
         browser = subprocess.Popen(
             [
                 binary,
@@ -360,6 +365,7 @@ def page(app_url):
                 browser.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 browser.kill()
+                browser.wait(timeout=15)
 
 
 def _selected_box(measurement: dict) -> list[float]:
