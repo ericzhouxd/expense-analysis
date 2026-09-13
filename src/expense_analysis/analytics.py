@@ -237,31 +237,6 @@ def cash_flow_by_month(frame: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
-def budget_status(
-    frame: pd.DataFrame, budgets: list[dict[str, object]], month: str
-) -> pd.DataFrame:
-    columns = ["category", "budget", "spent", "remaining", "percent_used"]
-    if not budgets:
-        return pd.DataFrame(columns=columns)
-    budget_frame = pd.DataFrame(budgets)
-    budget_frame["budget"] = budget_frame["amount_cents"].astype(float) / 100
-    month_period = pd.Period(month, freq="M")
-    spending = spending_frame(frame)
-    month_spending = (
-        spending[spending["month"].eq(month_period)]
-        .groupby("category", as_index=False)["spending"]
-        .sum()
-        .rename(columns={"spending": "spent"})
-    )
-    result = budget_frame.merge(month_spending, on="category", how="left")
-    result["spent"] = result["spent"].fillna(0.0)
-    result["remaining"] = result["budget"] - result["spent"]
-    result["percent_used"] = np.where(
-        result["budget"] > 0, result["spent"] / result["budget"] * 100, 0
-    )
-    return result[columns].sort_values("percent_used", ascending=False)
-
-
 def spending_drivers(frame: pd.DataFrame, as_of: date | None = None) -> pd.DataFrame:
     spending = spending_frame(frame)
     if spending.empty:

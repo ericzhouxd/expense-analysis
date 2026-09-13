@@ -113,15 +113,17 @@ direction used in spending and cash-flow calculations.
 - Notes and duplicate fingerprint
 - Creation and update timestamps
 
-`budgets` uses `(month, category)` as its primary key and stores integer cents.
-It is now a legacy table: preserved, not repurposed or deleted.
-
 Schema version 2 adds `spending_plans` with one active local row (`id = 1`), a
 validated versioned JSON payload and an update timestamp. Initialization is
 additive and does not downgrade a newer schema version. The payload contains the
 reference snapshot, custom target, bill coverage/category rules, buffer and
 transaction-ID-to-budget-month overrides. Save validates before writing and is
 atomic. No real student profile is included in source control.
+
+Schema version 3 drops the legacy `budgets` table. Its monthly category rows were
+superseded by `spending_plans`, so nothing had read or written the table since;
+`initialize` removes it from databases created under schema 2. Transactions and
+saved plans are untouched by that migration.
 
 Reserve accounting uses `max(planned, expense − refunds)` per bill cycle. This
 amount is allocated across its coverage with integer remainder distribution.

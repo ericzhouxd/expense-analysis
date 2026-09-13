@@ -171,9 +171,8 @@ of funding**. A waived insurance bill does not automatically lower the COA-based
 target: lower the target too if that is your intended policy.
 
 The app keeps one active local plan. Its public reference snapshot does not
-silently update when tuition tables change. The old monthly category budgets
-remain in SQLite for preservation but are no longer shown. Private plans and
-payment allocations are stored in the same ignored database as transactions.
+silently update when tuition tables change. Private plans and payment allocations
+are stored in the same ignored database as transactions.
 
 ## Understanding the overview
 

@@ -76,13 +76,6 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_transactions_fingerprint
                     ON transactions(fingerprint);
 
-                CREATE TABLE IF NOT EXISTS budgets (
-                    month TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    amount_cents INTEGER NOT NULL CHECK (amount_cents >= 0),
-                    PRIMARY KEY (month, category)
-                );
-
                 CREATE TABLE IF NOT EXISTS spending_plans (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     payload TEXT NOT NULL,
@@ -91,8 +84,11 @@ class Database:
                 """
             )
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version < 2:
-                connection.execute("PRAGMA user_version = 2")
+            if version < 3:
+                # Schema 3 drops `budgets`. `spending_plans` superseded its monthly
+                # category rows, so nothing has read or written it since.
+                connection.execute("DROP TABLE IF EXISTS budgets")
+                connection.execute("PRAGMA user_version = 3")
 
     def get_spending_plan(self) -> SpendingPlan | None:
         with self.connect() as connection:
@@ -327,36 +323,3 @@ class Database:
                 "SELECT COUNT(*) AS transaction_count FROM transactions"
             ).fetchone()
         return int(row["transaction_count"])
-
-    def set_budget(self, month: str, category: str, amount_cents: int) -> None:
-        if amount_cents < 0:
-            raise ValueError("Budget cannot be negative")
-        with self.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO budgets (month, category, amount_cents)
-                VALUES (?, ?, ?)
-                ON CONFLICT(month, category)
-                DO UPDATE SET amount_cents = excluded.amount_cents
-                """,
-                (month, category, amount_cents),
-            )
-
-    def get_budgets(self, month: str | None = None) -> list[dict[str, object]]:
-        with self.connect() as connection:
-            if month:
-                rows = connection.execute(
-                    """
-                    SELECT month, category, amount_cents
-                    FROM budgets WHERE month = ? ORDER BY category
-                    """,
-                    (month,),
-                ).fetchall()
-            else:
-                rows = connection.execute(
-                    """
-                    SELECT month, category, amount_cents
-                    FROM budgets ORDER BY month DESC, category
-                    """
-                ).fetchall()
-        return [dict(row) for row in rows]

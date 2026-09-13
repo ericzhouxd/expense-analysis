@@ -3,7 +3,6 @@ from datetime import date
 import pytest
 
 from expense_analysis.analytics import (
-    budget_status,
     monthly_spending,
     period_metrics,
     recurring_transactions,
@@ -86,18 +85,6 @@ def test_refunds_reduce_spending_and_income_improves_cash_flow():
     assert summary["net_outflow"] == 80
     assert summary["savings"] == 420
     assert summary["savings_rate"] == pytest.approx(84)
-
-
-def test_budget_variance():
-    frame = transactions_frame([row("1", "2026-07-01", 12500)], AppConfig())
-    status = budget_status(
-        frame,
-        [{"month": "2026-07", "category": "Food", "amount_cents": 30000}],
-        "2026-07",
-    )
-    assert status.iloc[0]["spent"] == 125
-    assert status.iloc[0]["remaining"] == 175
-    assert status.iloc[0]["percent_used"] == pytest.approx(41.6667)
 
 
 def test_recurring_charge_detection():
