@@ -98,3 +98,18 @@ def test_non_utf8_file_no_longer_raises_a_decode_error():
     content = "Description,Date,Amount\nCafé,2026-07-30,4.25\n".encode("cp1252")
     preview = preview_csv(content, AppConfig())
     assert len(preview.valid_drafts) == 1
+
+
+def test_import_reports_out_of_range_and_impossible_dates():
+    content = (
+        b"Description,Date,Amount\n"
+        b"Future thing,2099-01-01,10.00\n"
+        b"Impossible thing,2026-02-30,10.00\n"
+    )
+    preview = preview_csv(content, AppConfig())
+
+    assert preview.invalid_count == 2
+    assert not preview.valid_drafts
+    errors = [row.errors for row in preview.rows]
+    assert "Date must be between" in errors[0][0]
+    assert "is not a recognised date" in errors[1][0]

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from expense_analysis.config import AppConfig
@@ -304,3 +305,49 @@ def test_editing_activity_filters_ends_the_revealed_transaction_highlight(tmp_pa
     # Editing a filter ends the reveal so the filtered selection is respected.
     search_filter(app).set_value("no-match").run(timeout=30)
     assert "focused_transaction_id" not in app.session_state
+
+
+def submit_add_dialog(app, date_text):
+    next(field for field in app.text_input if field.label == "Date").set_value(date_text)
+    next(field for field in app.text_input if field.label == "Description").set_value(
+        "Synthetic dinner"
+    )
+    next(field for field in app.number_input if field.label == "Amount").set_value(12.5)
+    next(button for button in app.button if button.label == "Save transaction").click().run(
+        timeout=30
+    )
+
+
+@pytest.mark.parametrize(
+    ("date_text", "expected"),
+    [
+        ("2026-02-30", "is not a recognised date"),
+        ("02302026", "is not a recognised date"),
+        ("", "Date is required"),
+        ("   ", "Date is required"),
+        ("1899-12-31", "Date must be between"),
+        ("2099-01-01", "Date must be between"),
+    ],
+)
+def test_add_transaction_dialog_shows_inline_date_errors(tmp_path, date_text, expected):
+    database = Database(tmp_path / "invalid-date.sqlite3")
+    database.initialize()
+    app = AppTest.from_function(render_add_transaction_dialog, args=(database,)).run(timeout=30)
+
+    submit_add_dialog(app, date_text)
+
+    assert database.count_transactions() == 0
+    assert not app.exception
+    assert any(expected in error.value for error in app.error)
+
+
+def test_add_transaction_dialog_accepts_a_typed_date(tmp_path):
+    database = Database(tmp_path / "valid-date.sqlite3")
+    database.initialize()
+    app = AppTest.from_function(render_add_transaction_dialog, args=(database,)).run(timeout=30)
+
+    submit_add_dialog(app, "07/30/2026")
+
+    assert not app.exception
+    assert database.count_transactions() == 1
+    assert database.list_transactions()[0]["transaction_date"] == "2026-07-30"

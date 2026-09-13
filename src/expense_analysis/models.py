@@ -4,13 +4,17 @@ import hashlib
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from .config import TRANSACTION_TYPES
 
 DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%y", "%m/%d/%Y", "%m-%d-%y", "%m-%d-%Y")
+# Any real ledger entry is later than this; earlier values are typos, not history.
+MIN_TRANSACTION_DATE = date(1900, 1, 1)
+# Allow post-dated/planned entries up to a year ahead while rejecting obvious typos.
+MAX_FUTURE_TRANSACTION_DAYS = 366
 
 
 def parse_date(value: date | datetime | str) -> date:
@@ -31,6 +35,22 @@ def parse_date(value: date | datetime | str) -> date:
         except ValueError:
             continue
     raise ValueError(f"Date {cleaned!r} is not a recognised date (try YYYY-MM-DD)")
+
+
+def validate_transaction_date(value: date | datetime | str, *, today: date | None = None) -> date:
+    """Parse a date and enforce the transaction range policy.
+
+    `today` is injectable so callers and tests can pin the future cutoff.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise ValueError("Date is required")
+    parsed = parse_date(value)
+    latest = (today or date.today()) + timedelta(days=MAX_FUTURE_TRANSACTION_DAYS)
+    if parsed < MIN_TRANSACTION_DATE or parsed > latest:
+        raise ValueError(
+            f"Date must be between {MIN_TRANSACTION_DATE.isoformat()} and {latest.isoformat()}"
+        )
+    return parsed
 
 
 def parse_amount_cents(value: Any) -> int:
@@ -93,7 +113,7 @@ class TransactionDraft:
         if transaction_type not in TRANSACTION_TYPES:
             raise ValueError(f"Transaction type must be one of: {', '.join(TRANSACTION_TYPES)}")
         return TransactionDraft(
-            transaction_date=parse_date(self.transaction_date),
+            transaction_date=validate_transaction_date(self.transaction_date),
             description=description,
             amount_cents=self.amount_cents,
             category=category,

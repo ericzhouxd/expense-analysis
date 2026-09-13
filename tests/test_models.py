@@ -1,8 +1,14 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
-from expense_analysis.models import TransactionDraft, parse_amount_cents, parse_date
+from expense_analysis.models import (
+    MAX_FUTURE_TRANSACTION_DAYS,
+    TransactionDraft,
+    parse_amount_cents,
+    parse_date,
+    validate_transaction_date,
+)
 
 
 @pytest.mark.parametrize(
@@ -82,3 +88,38 @@ def test_unparseable_amount_message_is_written_for_users(value):
     message = str(error.value)
     assert "is not a number" in message
     assert "None" not in message
+
+
+@pytest.mark.parametrize("value", ["02302026", "2026-02-30", "13452026", "99999999"])
+def test_parse_date_reports_a_human_readable_error(value):
+    with pytest.raises(ValueError, match="is not a recognised date"):
+        parse_date(value)
+
+
+@pytest.mark.parametrize("value", ["", "   ", None, "2026-02-30", "not a date"])
+def test_validate_transaction_date_rejects_empty_and_unparseable(value):
+    with pytest.raises(ValueError):
+        validate_transaction_date(value, today=date(2026, 9, 12))
+
+
+def test_validate_transaction_date_enforces_the_documented_range():
+    today = date(2026, 9, 12)
+    latest = today + timedelta(days=MAX_FUTURE_TRANSACTION_DAYS)
+
+    assert validate_transaction_date("2026-09-12", today=today) == today
+    assert validate_transaction_date(latest, today=today) == latest
+
+    with pytest.raises(ValueError, match="Date must be between"):
+        validate_transaction_date("1899-12-31", today=today)
+    with pytest.raises(ValueError, match="Date must be between"):
+        validate_transaction_date(latest + timedelta(days=1), today=today)
+
+
+def test_transaction_draft_rejects_an_out_of_range_date():
+    with pytest.raises(ValueError, match="Date must be between"):
+        TransactionDraft(
+            transaction_date=date(2099, 1, 1),
+            description="Test",
+            amount_cents=100,
+            category="Food",
+        ).validated()
