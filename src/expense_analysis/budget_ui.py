@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -93,6 +94,7 @@ def _setup(database: Database, plan: SpendingPlan | None, config: AppConfig) -> 
         "UCLA undergraduate estimates are a starting point, not a bill or available cash. "
         "Nothing is saved until you confirm your costs."
     )
+    reference: dict[str, Any]
     if plan is None:
         first, second, third = st.columns(3)
         cohort = first.selectbox("UC entry cohort", list(UCLA_2026["cohorts"]))

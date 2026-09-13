@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import date
+from typing import Any
 
 
 def month_after(start: date, offset: int) -> date:
@@ -106,7 +107,7 @@ class SpendingPlan:
         return cls(**values).validate()
 
 
-def calculate_plan(plan: SpendingPlan, transactions: list[dict]) -> dict:
+def calculate_plan(plan: SpendingPlan, transactions: list[dict[str, Any]]) -> dict[str, Any]:
     """Reserve max(planned, net paid) per bill cycle, spread over its coverage.
 
     Actuals replace reserves, never add a second deduction. Refunds reduce net
@@ -119,7 +120,7 @@ def calculate_plan(plan: SpendingPlan, transactions: list[dict]) -> dict:
     if plan.months == 12:
         targets += split_cents(plan.summer_target_cents, 3)
     buffers = split_cents(plan.buffer_cents, plan.months)
-    months = [
+    months: list[dict[str, Any]] = [
         {
             "month": key,
             "target": targets[i],
@@ -132,13 +133,13 @@ def calculate_plan(plan: SpendingPlan, transactions: list[dict]) -> dict:
         for i, key in enumerate(keys)
     ]
     months_by_key = dict(zip(keys, months, strict=True))
-    obligations = []
-    mapping = {}
+    obligations: list[dict[str, Any]] = []
+    mapping: dict[tuple[str, str], dict[str, Any]] = {}
     for cost in plan.commitments:
         length = {"Monthly": 1, "Quarterly": 3, "Coverage total": cost.months}[cost.cadence]
         for start in range(cost.first_month, cost.first_month + cost.months, length):
             coverage = list(range(start, start + length))
-            obligation = {
+            obligation: dict[str, Any] = {
                 "name": cost.name,
                 "coverage": coverage,
                 "planned": cost.amount_cents,
@@ -148,7 +149,7 @@ def calculate_plan(plan: SpendingPlan, transactions: list[dict]) -> dict:
             for i in coverage:
                 for category in cost.categories:
                     mapping[category, keys[i]] = obligation
-    classified = []
+    classified: list[dict[str, Any]] = []
     for transaction in transactions:
         kind = transaction["transaction_type"]
         if kind not in ("expense", "refund"):
@@ -161,9 +162,9 @@ def calculate_plan(plan: SpendingPlan, transactions: list[dict]) -> dict:
             continue
         amount = int(transaction["amount_cents"]) * (-1 if kind == "refund" else 1)
         category = transaction["category"]
-        obligation = mapping.get((category, month_key))
-        if obligation is not None:
-            obligation["paid"] += amount
+        matched = mapping.get((category, month_key))
+        if matched is not None:
+            matched["paid"] += amount
             month["committed_paid"] += amount
         else:
             month["flexible_spent"] += amount
@@ -173,7 +174,7 @@ def calculate_plan(plan: SpendingPlan, transactions: list[dict]) -> dict:
                 **transaction,
                 "budget_month": month_key,
                 "net_cents": amount,
-                "budget_bucket": obligation["name"] if obligation else "Everyday",
+                "budget_bucket": matched["name"] if matched else "Everyday",
             }
         )
     for obligation in obligations:
@@ -185,10 +186,10 @@ def calculate_plan(plan: SpendingPlan, transactions: list[dict]) -> dict:
             strict=True,
         ):
             months[i]["reserved"] += amount
-    quarters = []
+    quarters: list[dict[str, Any]] = []
     for first in range(0, plan.months, 3):
         quarter_months = months[first : first + 3]
-        quarter = {
+        quarter: dict[str, Any] = {
             field: sum(month[field] for month in quarter_months)
             for field in ("target", "buffer", "reserved", "flexible_spent", "committed_paid")
         }

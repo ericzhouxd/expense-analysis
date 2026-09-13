@@ -200,7 +200,9 @@ def test_persistence_is_additive_and_roundtrips(plan, tmp_path):
     with database.connect() as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
     database.save_spending_plan(replace(plan, buffer_cents=0))
-    assert database.get_spending_plan().buffer_cents == 0
+    saved = database.get_spending_plan()
+    assert saved is not None
+    assert saved.buffer_cents == 0
 
 
 def test_initialize_drops_the_legacy_budgets_table(tmp_path):
@@ -255,7 +257,9 @@ def test_setup_and_all_pages_use_synthetic_database(plan, tmp_path, monkeypatch)
     app.checkbox[0].check()
     next(b for b in app.button if b.label == "Save spending plan").click().run()
     assert not app.exception
-    assert database.get_spending_plan().reference["cohort"] == "2024–25"
+    saved = database.get_spending_plan()
+    assert saved is not None
+    assert saved.reference["cohort"] == "2024–25"
     database.save_spending_plan(plan)
     database.add_transaction(
         TransactionDraft(
@@ -313,4 +317,6 @@ def test_budget_category_choices_preserve_commas_when_resaved(plan, tmp_path):
     app.checkbox[0].check()
     next(button for button in app.button if button.label == "Save spending plan").click().run()
     assert not app.exception and not app.error
-    assert database.get_spending_plan().commitments[0].categories == ("Art, materials",)
+    saved = database.get_spending_plan()
+    assert saved is not None
+    assert saved.commitments[0].categories == ("Art, materials",)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 from dataclasses import dataclass
+from typing import Any
 
 from .config import AppConfig
 from .models import TransactionDraft, parse_amount_cents, parse_date
@@ -131,7 +132,7 @@ def preview_csv(
     return ImportPreview(tuple(preview_rows))
 
 
-def export_csv(rows: list[dict[str, object]]) -> bytes:
+def export_csv(rows: list[dict[str, Any]]) -> bytes:
     output = io.StringIO(newline="")
     fieldnames = (
         "ID",

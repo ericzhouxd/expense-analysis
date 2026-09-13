@@ -54,7 +54,7 @@ def collect_changes(original: pd.DataFrame, edited: pd.DataFrame) -> list[Transa
         raise ValueError("The table records changed. Discard edits and reload the table.")
     baseline = original.set_index("ID")
     changes = []
-    for index, row in edited.iterrows():
+    for row_number, (_, row) in enumerate(edited.iterrows(), start=1):
         before_row = baseline.loc[row["ID"]]
         if not row["Delete"] and row.drop(labels=["ID", "Delete"]).equals(
             before_row.drop(labels="Delete")
@@ -64,7 +64,7 @@ def collect_changes(original: pd.DataFrame, edited: pd.DataFrame) -> list[Transa
             before = draft_from_editor(before_row)
             after = None if row["Delete"] else draft_from_editor(row)
         except ValueError as exc:
-            raise ValueError(f"Row {index + 1}: {exc}") from exc
+            raise ValueError(f"Row {row_number}: {exc}") from exc
         if before != after:
             changes.append(TransactionChange(str(row["ID"]), before, after))
     return changes

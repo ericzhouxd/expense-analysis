@@ -118,11 +118,8 @@ def category_spending(frame: pd.DataFrame, *, personal_only: bool = False) -> pd
     spending = spending_frame(frame, personal_only=personal_only)
     if spending.empty:
         return pd.DataFrame(columns=["category", "spending"])
-    return (
-        spending.groupby("category", as_index=False)["spending"]
-        .sum()
-        .sort_values("spending", ascending=False)
-    )
+    grouped = spending.groupby("category")["spending"].sum().reset_index()
+    return grouped.sort_values("spending", ascending=False)
 
 
 def period_metrics(
@@ -201,11 +198,8 @@ def comparable_year_months(frame: pd.DataFrame) -> pd.DataFrame:
     spending = spending_frame(frame, personal_only=True)
     if spending.empty:
         return pd.DataFrame(columns=["year", "month_number", "spending"])
-    return (
-        spending.groupby(["year", "month_number"], as_index=False)["spending"]
-        .sum()
-        .sort_values(["year", "month_number"])
-    )
+    grouped = spending.groupby(["year", "month_number"])["spending"].sum().reset_index()
+    return grouped.sort_values(["year", "month_number"])
 
 
 def academic_period_spending(frame: pd.DataFrame) -> pd.DataFrame:
@@ -248,7 +242,7 @@ def spending_drivers(frame: pd.DataFrame, as_of: date | None = None) -> pd.DataF
         spending[spending["month"].isin([current_period, previous_period])]
         .groupby(["category", "month"])["spending"]
         .sum()
-        .unstack(fill_value=0.0)
+        .unstack(fill_value=0)
     )
     for period in (current_period, previous_period):
         if period not in grouped.columns:
@@ -290,11 +284,12 @@ def recurring_transactions(frame: pd.DataFrame) -> pd.DataFrame:
         source.str.casefold().str.replace(r"\d+", "", regex=True).str.split().str.join(" ")
     )
     recurring: list[dict[str, object]] = []
-    for merchant, group in working.groupby("merchant_key"):
+    for key, group in working.groupby("merchant_key"):
         group = group.sort_values("transaction_date")
-        if not merchant or len(group) < 3:
+        if not key or len(group) < 3:
             continue
-        intervals = group["transaction_date"].diff().dt.days.dropna()
+        dates = pd.to_datetime(group["transaction_date"])
+        intervals = dates.diff().dt.days.dropna()
         if intervals.empty:
             continue
         median_interval = float(intervals.median())
@@ -314,7 +309,7 @@ def recurring_transactions(frame: pd.DataFrame) -> pd.DataFrame:
             continue
         recurring.append(
             {
-                "merchant": merchant.title(),
+                "merchant": str(key).title(),
                 "frequency": frequency,
                 "occurrences": len(group),
                 "average_amount": mean_amount,

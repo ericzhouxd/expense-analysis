@@ -25,7 +25,7 @@ def choice_options(database: Database, config: AppConfig, kind: str) -> list[str
         plan = database.get_spending_plan()
         if plan:
             values.extend(category for cost in plan.commitments for category in cost.categories)
-    unique = {}
+    unique: dict[str, str] = {}
     for value in values:
         clean = value.strip()
         if clean:
