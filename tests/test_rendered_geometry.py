@@ -57,6 +57,17 @@ NAV_ROWS = (
 # A plain selector for readiness checks, where an element expression will not do.
 NAV_SELECTOR = ".st-key-main_navigation [role='radiogroup'] label input"
 THEME_CHOICES = "[data-jizhang-theme-choice]"
+# The Edit table option is one nested node inside the segmented control; the
+# shortest match is the element that actually wraps the option.
+EDIT_TABLE_SELECTOR = (
+    "[...document.querySelectorAll('label, button, p, div')]"
+    ".filter((el) => el.textContent.trim() === 'Edit table')"
+    ".sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length)[0]"
+)
+REVIEW_CHANGES_READY = (
+    "[...document.querySelectorAll('button')]"
+    ".some((b) => b.textContent.trim().startsWith('Review changes'))"
+)
 
 # Exactly the selectors theme.css sizes, so a passing check means the rule reached
 # the rendered control rather than merely existing in the stylesheet.
@@ -123,6 +134,63 @@ MEASURE_FORM = """
   return JSON.stringify(out);
 })()
 """.replace("FORM_SELECTORS_PLACEHOLDER", json.dumps(FORM_SELECTORS))
+
+MEASURE_DISABLED_PRIMARY = """
+(() => {
+  // color(...) channels are 0-1; rgb() channels are 0-255.
+  const parse = (value) => {
+    const scale = value.startsWith('color(') ? 255 : 1;
+    return (value.match(/[\\d.]+/g) || []).map((n, i) => (i < 3 ? Number(n) * scale : Number(n)));
+  };
+  const luminance = (rgb) => rgb.slice(0, 3).map((v) => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  }).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const button = [...document.querySelectorAll('button')]
+    .find((el) => el.textContent.trim().startsWith('Review changes'));
+  if (!button) return null;
+  const style = getComputedStyle(button);
+  const foreground = parse(style.color);
+  const background = parse(style.backgroundColor);
+  const alpha = foreground.length > 3 ? foreground[3] : 1;
+  const base = background.length > 3 && background[3] === 0
+    ? parse(getComputedStyle(document.querySelector('.stApp')).backgroundColor)
+    : background;
+  const composited = foreground.slice(0, 3).map((v, i) => alpha * v + (1 - alpha) * base[i]);
+  const first = luminance(composited);
+  const second = luminance(base);
+  return JSON.stringify({
+    disabled: button.disabled,
+    backgroundAlpha: background.length > 3 ? background[3] : 1,
+    contrast: (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05),
+  });
+})()
+"""
+
+
+MEASURE_ACTION_ROW = """
+(() => {
+  const box = (el) => {
+    const r = el.getBoundingClientRect();
+    return {x: +r.x.toFixed(2), y: +r.y.toFixed(2), right: +r.right.toFixed(2),
+            w: +r.width.toFixed(2), h: +r.height.toFixed(2)};
+  };
+  const button = (label) => [...document.querySelectorAll('button')]
+    .find((el) => el.textContent.trim() === label)
+    || [...document.querySelectorAll('button')]
+      .find((el) => el.textContent.trim().startsWith(label));
+  const editor = document.querySelector("[data-testid='stDataFrame']");
+  const add = button('Add transaction');
+  const review = button('Review changes');
+  const discard = button('Discard edits / reload');
+  return JSON.stringify({
+    editor: editor ? box(editor) : null,
+    add: add ? box(add) : null,
+    review: review ? box(review) : null,
+    discard: discard ? box(discard) : null,
+  });
+})()
+"""
 
 
 def _free_port() -> int:
@@ -518,3 +586,59 @@ def test_add_transaction_controls_all_reach_the_height_theme_css_declares(page):
     assert None not in heights.values(), heights
     assert len(set(heights.values())) == 1, heights
     assert next(iter(heights.values())) == pytest.approx(42, abs=TOLERANCE), heights
+
+
+def test_disabled_primary_button_stays_readable_in_dark_mode(page):
+    """A disabled primary button must not paint its dark label on the dark canvas.
+
+    Streamlit paints disabled primary buttons with a transparent fill, but the
+    theme still forced the dark ink colour, so the label vanished on the near-black
+    canvas. The theme must keep a visible fill and a readable label in both themes.
+    """
+    # The previous check may have left the Add transaction dialog open.
+    page.press("Escape", "Escape", 27)
+    page.select_page("Transactions")
+    page.wait_js("document.body.innerText.includes('Edit table')", timeout=45)
+    page.click(EDIT_TABLE_SELECTOR)
+    page.wait_js(REVIEW_CHANGES_READY, timeout=45)
+
+    page.click(
+        "[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Dark')"
+    )
+    page.wait_js("document.documentElement.dataset.jizhangTheme === 'dark'", timeout=30)
+    page.wait_js(REVIEW_CHANGES_READY, timeout=45)
+
+    measurement = json.loads(page.evaluate(MEASURE_DISABLED_PRIMARY))
+    assert measurement is not None, "the Review changes button never rendered"
+    assert measurement["disabled"] is True, measurement
+    assert measurement["backgroundAlpha"] == 1, measurement
+    assert measurement["contrast"] >= 4.5, measurement
+
+    page.click(
+        "[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'System')"
+    )
+
+
+def test_edit_table_actions_cluster_and_size_to_content(page):
+    """The editor sizes to its rows and the actions sit right-aligned beneath it.
+
+    A fixed 520px editor left blank space with few rows and pushed the actions
+    down with many; half-width action columns stranded "Discard edits" in the
+    middle of the page while the header button stayed right-aligned.
+    """
+    page.press("Escape", "Escape", 27)
+    page.select_page("Transactions")
+    page.wait_js("document.body.innerText.includes('Edit table')", timeout=45)
+    page.click(EDIT_TABLE_SELECTOR)
+    page.wait_js(REVIEW_CHANGES_READY, timeout=45)
+    page.wait_js("!!document.querySelector(\"[data-testid='stDataFrame']\")", timeout=45)
+
+    boxes = page.measure(MEASURE_ACTION_ROW)
+    assert None not in boxes.values(), boxes
+    # Two seeded rows: 48px chrome + 2 * 35px rows, floored at 200.
+    assert boxes["editor"]["h"] == pytest.approx(200, abs=TOLERANCE), boxes
+    # Discard shares the header button's right edge; Review sits just beside it.
+    assert boxes["discard"]["right"] == pytest.approx(boxes["add"]["right"], abs=4), boxes
+    assert 0 <= boxes["discard"]["x"] - boxes["review"]["right"] <= 40, boxes
+    # The actions stay next to the data instead of drifting below a taller grid.
+    assert boxes["review"]["y"] - (boxes["editor"]["y"] + boxes["editor"]["h"]) <= 40, boxes

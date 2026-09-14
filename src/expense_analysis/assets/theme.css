@@ -318,6 +318,14 @@ h1, h2, h3 { font-family: var(--ui-font); }
   background: #bbdc18; color: #12160a !important; }
 [data-testid='stBaseButton-primary'] *, [data-testid='stBaseButton-primaryFormSubmit'] * {
   color: inherit !important; }
+/* Streamlit paints disabled primary buttons transparent while the rule above
+   still forces the dark label, so the text vanished on the dark canvas. Keep a
+   faded accent fill and a theme-aware label instead. */
+[data-testid='stBaseButton-primary']:disabled,
+[data-testid='stBaseButton-primaryFormSubmit']:disabled {
+  background: color-mix(in srgb, var(--accent) 30%, var(--panel)) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important; }
 [data-baseweb='calendar'] [role='gridcell']:is([tabindex='0'], [aria-label^='Selected']) {
   position: relative; color: #12160a !important; font-weight: 600; }
 [data-baseweb='calendar'] [role='gridcell']:is([tabindex='0'], [aria-label^='Selected']) * {
