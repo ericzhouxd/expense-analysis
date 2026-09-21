@@ -19,7 +19,7 @@ expense-export = "expense_analysis.cli:export_main"
 [dependency-groups]
 dev = [
     "mypy>=1.19,<2",
-    "pandas-stubs>=2.3,<2.4",
+    "pandas-stubs>=2.3,<3.1",
     "pre-commit>=4.6.2",
     "pytest>=8.4,<10",
     "ruff>=0.12,<1",
