@@ -10,6 +10,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+from ..categories import suggestion_data
 from ..config import AppConfig
 from ..database import Database
 from ..import_export import CsvDecodeError, ImportPreview, decode_csv, export_csv, preview_csv
@@ -66,7 +67,10 @@ def _render_csv_preview(database: Database, content: bytes, config: AppConfig) -
                         accept_new_options=True,
                         key=f"import_category_{digest}_{label}",
                     )
-        preview = preview_csv(content, config, database.existing_fingerprints(), mapping)
+        suggestions = suggestion_data(database, config)["merchants"]
+        preview = preview_csv(
+            content, config, database.existing_fingerprints(), mapping, suggestions
+        )
     except CsvDecodeError as exc:
         st.error(str(exc))
         return

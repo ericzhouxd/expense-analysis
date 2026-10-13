@@ -11,6 +11,7 @@ from expense_analysis.categories import (
 )
 from expense_analysis.config import AppConfig
 from expense_analysis.database import Database
+from expense_analysis.import_export import preview_csv
 from expense_analysis.models import TransactionDraft
 from expense_analysis.spending_plan import Commitment, SpendingPlan
 
@@ -94,3 +95,21 @@ def test_custom_categories_work_without_transactions_and_merchant_history_is_con
         TransactionDraft(date(2026, 10, 6), "Another 2", 1000, "Food", merchant="Food store")
     )
     assert suggestion_data(database, updated)["merchants"]["food store"] == "Food"
+
+
+def test_merchant_history_auto_detects_categories_during_import(database):
+    config = AppConfig()
+    for day in (1, 2, 3):
+        database.add_transaction(
+            TransactionDraft(
+                date(2026, 10, day), "Synthetic", 1000, "Food", merchant="Green Grocer"
+            )
+        )
+    suggestions = suggestion_data(database, config)["merchants"]
+    preview = preview_csv(
+        b"Description,Date,Amount,Category,Merchant\n"
+        b"Synthetic,2026-10-10,9.99,Surprise,Green Grocer\n",
+        config,
+        merchant_suggestions=suggestions,
+    )
+    assert preview.valid_drafts[0].category == "Food"
