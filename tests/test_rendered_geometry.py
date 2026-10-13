@@ -73,10 +73,10 @@ REVIEW_CHANGES_READY = (
 # the rendered control rather than merely existing in the stylesheet.
 FORM_SELECTORS = {
     "date": ".st-key-add_transaction_date [data-testid='stTextInputRootElement']",
-    "description": ".st-key-add_transaction_description [data-testid='stTextInputRootElement']",
-    "merchant": ".st-key-add_transaction_merchant [data-testid='stTextInputRootElement']",
+    "description": ".category-entry input[name=description]",
+    "merchant": ".category-entry input[name=merchant]",
     "amount": ".st-key-add_transaction_amount [data-testid='stNumberInputContainer']",
-    "category": "[data-testid='stSelectbox'] .react-aria-ComboBox > [role='group']",
+    "category": ".category-entry input[name=category]",
     "submit": ".st-key-add_transaction_submit [data-testid='stBaseButton-primaryFormSubmit']",
 }
 
@@ -674,6 +674,7 @@ def test_add_transaction_controls_all_reach_the_height_theme_css_declares(page):
         ".find((el) => el.textContent.trim() === 'Add transaction')"
     )
     page.wait_js(f"!!document.querySelector({json.dumps(FORM_SELECTORS['submit'])})", timeout=45)
+    page.wait_js("!!document.querySelector('.category-entry input[name=description]')", timeout=45)
 
     heights = page.measure(MEASURE_FORM)
     assert None not in heights.values(), heights
@@ -803,7 +804,7 @@ def test_calendar_selection_updates_validated_date_and_saves(page):
     page.wait_js(f"{text}.value === '2026-07-22'")
     page.press("Enter", "Enter", 13)
     for selector, value in (
-        (".st-key-add_transaction_description input", "Synthetic calendar purchase"),
+        (".category-entry input[name=description]", "Synthetic calendar purchase"),
         (".st-key-add_transaction_amount input", "19.25"),
     ):
         page.evaluate(f"document.querySelector({json.dumps(selector)}).focus()")
@@ -815,3 +816,43 @@ def test_calendar_selection_updates_validated_date_and_saves(page):
     page.click("document.querySelector('.st-key-view_saved_transaction button')")
     page.wait_js("document.body.innerText.includes('Synthetic calendar purchase')")
     page.wait_js("document.body.textContent.includes('Jul 22')")
+
+
+def test_live_category_suggestions_manual_override_and_save(page):
+    page.select_page("Transactions")
+    page.click("document.querySelector('.st-key-open_add_transaction button')")
+    page.wait_js("!!document.querySelector('.category-entry input[name=description]')")
+
+    def type_field(name, value):
+        page.evaluate(f"document.querySelector('.category-entry input[name={name}]').focus()")
+        page.evaluate(f"document.querySelector('.category-entry input[name={name}]').select()")
+        page._command("Input.insertText", {"text": value})
+
+    type_field("description", "groceries")
+    page.wait_js("document.querySelector('.category-entry input[name=category]').value === 'Food'")
+    type_field("description", "coffee")
+    page.wait_js(
+        "document.querySelector('.category-entry input[name=category]').value === 'Dining Out'"
+    )
+    type_field("category", "Special purchases")
+    type_field("merchant", "Synthetic coffee shop")
+    page.evaluate("new Promise(resolve => setTimeout(resolve, 400))")
+    assert (
+        page.evaluate("document.querySelector('.category-entry input[name=category]').value")
+        == "Special purchases"
+    )
+    page.evaluate("document.querySelector('.st-key-add_transaction_amount input').focus()")
+    page._command("Input.insertText", {"text": "5.25"})
+    type_field("description", "Synthetic live category purchase")
+    page.click("document.querySelector('.st-key-add_transaction_submit button')")
+    page.wait_js("document.body.innerText.includes('Transaction saved.')")
+    page.click("document.querySelector('.st-key-view_saved_transaction button')")
+    page.wait_js("document.body.innerText.includes('Synthetic live category purchase')")
+    assert "special purchases" in page.evaluate("document.body.innerText").lower()
+    page.click("document.querySelector('.st-key-open_add_transaction button')")
+    page.wait_js("!!document.querySelector('.category-entry input[name=description]')")
+    assert (
+        page.evaluate("document.querySelector('.category-entry input[name=description]').value")
+        == ""
+    )
+    page.press("Escape", "Escape", 27)

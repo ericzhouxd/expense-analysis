@@ -187,6 +187,7 @@ def calculate_plan(plan: SpendingPlan, transactions: list[dict[str, Any]]) -> di
         ):
             months[i]["reserved"] += amount
     quarters: list[dict[str, Any]] = []
+    rollover = 0
     for first in range(0, plan.months, 3):
         quarter_months = months[first : first + 3]
         quarter: dict[str, Any] = {
@@ -194,9 +195,9 @@ def calculate_plan(plan: SpendingPlan, transactions: list[dict[str, Any]]) -> di
             for field in ("target", "buffer", "reserved", "flexible_spent", "committed_paid")
         }
         quarter["allowance"] = quarter["target"] - quarter["buffer"] - quarter["reserved"]
-        quarter["remaining"] = quarter["allowance"] - quarter["flexible_spent"]
+        quarter["rollover"] = rollover
+        quarter["remaining"] = rollover + quarter["allowance"] - quarter["flexible_spent"]
         quarter["months"] = [month["month"] for month in quarter_months]
-        rollover = 0
         for month, allowance in zip(
             quarter_months, split_cents(quarter["allowance"], 3), strict=True
         ):

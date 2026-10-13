@@ -76,6 +76,11 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_transactions_fingerprint
                     ON transactions(fingerprint);
 
+                CREATE TABLE IF NOT EXISTS category_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    payload TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS spending_plans (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     payload TEXT NOT NULL,

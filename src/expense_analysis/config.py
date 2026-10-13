@@ -88,6 +88,7 @@ class AppConfig:
     default_account: str = "Checking"
     default_payment_method: str = "Card"
     category_rules: tuple[tuple[str, str], ...] = ()
+    category_aliases: tuple[tuple[str, str], ...] = ()
     academic_calendar: AcademicCalendar = field(default_factory=AcademicCalendar)
 
     @property
@@ -102,8 +103,12 @@ class AppConfig:
         return "Uncategorized"
 
     def category_for(self, description: str, merchant: str = "", provided: str = "") -> str:
-        if provided in self.categories:
-            return provided
+        provided = dict(self.category_aliases).get(provided, provided)
+        matched = next(
+            (v for v in self.categories if v.casefold() == provided.strip().casefold()), None
+        )
+        if matched:
+            return matched
         searchable = f"{description} {merchant}".casefold()
         for keyword, category in self.category_rules:
             if keyword.casefold() in searchable and category in self.categories:

@@ -1,0 +1,9 @@
+ .category-entry {font-family:var(--st-font);color:var(--st-text-color);display:grid;gap:12px}
+    .category-entry label {display:grid;gap:6px;font-size:14px;min-width:0}
+    .category-entry input {box-sizing:border-box;width:100%;height:35px;font:inherit;color:var(--st-text-color);
+      background:var(--st-secondary-background-color);border:1px solid var(--st-text-color);border-radius:0;padding:0 10px}
+    .category-entry input:focus {outline:2px solid var(--st-primary-color);outline-offset:1px}
+    .category-entry-help {display:flex;flex-wrap:wrap;gap:8px;font-size:12px;align-items:center}
+    .category-entry button {font:inherit;color:var(--st-text-color);background:var(--st-secondary-background-color);
+      border:1px solid var(--st-text-color);padding:5px 8px;cursor:pointer}
+    

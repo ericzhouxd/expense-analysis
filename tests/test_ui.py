@@ -120,11 +120,15 @@ def test_add_transaction_dialog_saves_transaction(tmp_path):
     database = Database(tmp_path / "dialog.sqlite3")
     database.initialize()
     app = AppTest.from_function(render_add_transaction_dialog, args=(database,)).run()
-    category = next(field for field in app.selectbox if field.label == "Category")
 
-    next(field for field in app.text_input if field.label == "Description").set_value(
-        "Synthetic dinner"
-    )
+    app.session_state["transaction_entry"] = {
+        "entry": {
+            "description": "Synthetic dinner",
+            "merchant": "",
+            "category": "Food",
+            "manual": True,
+        }
+    }
     next(field for field in app.number_input if field.label == "Amount").set_value(12.5)
     next(field for field in app.text_area if field.label == "Notes").set_value("Saved in dialog")
     next(button for button in app.button if button.label == "Save transaction").click().run()
@@ -134,7 +138,7 @@ def test_add_transaction_dialog_saves_transaction(tmp_path):
     assert transaction["description"] == "Synthetic dinner"
     assert app.session_state["saved_transaction_id"] == transaction["id"]
     assert app.session_state["show_saved_transaction_notice"] is True
-    assert category.proto.accept_new_options is True
+    assert transaction["category"] == "Food"
 
 
 def test_hot_reloaded_database_supports_category_and_transaction_lookups(tmp_path):
@@ -268,9 +272,14 @@ def test_add_transaction_dialog_invalidates_activity_filters(tmp_path, monkeypat
     )
 
     app = AppTest.from_function(render_add_transaction_for_test, args=(database,)).run(timeout=30)
-    next(field for field in app.text_input if field.label == "Description").set_value(
-        "Synthetic dinner"
-    )
+    app.session_state["transaction_entry"] = {
+        "entry": {
+            "description": "Synthetic dinner",
+            "merchant": "",
+            "category": "Food",
+            "manual": True,
+        }
+    }
     next(field for field in app.number_input if field.label == "Amount").set_value(12.5)
     next(button for button in app.button if button.label == "Save transaction").click().run(
         timeout=30
@@ -309,9 +318,14 @@ def test_editing_activity_filters_ends_the_revealed_transaction_highlight(tmp_pa
 
 def submit_add_dialog(app, date_text):
     next(field for field in app.text_input if field.label == "Date").set_value(date_text)
-    next(field for field in app.text_input if field.label == "Description").set_value(
-        "Synthetic dinner"
-    )
+    app.session_state["transaction_entry"] = {
+        "entry": {
+            "description": "Synthetic dinner",
+            "merchant": "",
+            "category": "Food",
+            "manual": True,
+        }
+    }
     next(field for field in app.number_input if field.label == "Amount").set_value(12.5)
     next(button for button in app.button if button.label == "Save transaction").click().run(
         timeout=30

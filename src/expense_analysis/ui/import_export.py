@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import csv
+import hashlib
+import io
 from datetime import date
 
 import pandas as pd
@@ -9,7 +12,7 @@ import streamlit as st
 
 from ..config import AppConfig
 from ..database import Database
-from ..import_export import CsvDecodeError, ImportPreview, export_csv, preview_csv
+from ..import_export import CsvDecodeError, ImportPreview, decode_csv, export_csv, preview_csv
 from .state import _invalidate_activity_filters
 from .widgets import _page_heading, _section_heading
 
@@ -35,7 +38,35 @@ def _preview_table(preview: ImportPreview) -> pd.DataFrame:
 
 def _render_csv_preview(database: Database, content: bytes, config: AppConfig) -> None:
     try:
-        preview = preview_csv(content, config, database.existing_fingerprints())
+        labels = sorted(
+            {
+                str(value).strip()
+                for row in csv.DictReader(io.StringIO(decode_csv(content)))
+                for key, value in row.items()
+                if key and key.strip().casefold() == "category" and value
+            }
+        )
+        unknown = [
+            v
+            for v in labels
+            if v not in config.categories and v not in dict(config.category_aliases)
+        ]
+        mapping = {}
+        if unknown:
+            with st.expander("Map imported categories", expanded=True):
+                st.caption(
+                    "Keep each imported label, choose a broad category, or type a new "
+                    "one. Review the resulting categories below before importing."
+                )
+                digest = hashlib.sha256(content).hexdigest()[:12]
+                for label in unknown:
+                    mapping[label] = st.selectbox(
+                        label,
+                        list(dict.fromkeys([label, *config.categories])),
+                        accept_new_options=True,
+                        key=f"import_category_{digest}_{label}",
+                    )
+        preview = preview_csv(content, config, database.existing_fingerprints(), mapping)
     except CsvDecodeError as exc:
         st.error(str(exc))
         return

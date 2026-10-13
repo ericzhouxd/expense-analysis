@@ -11,15 +11,13 @@ from ..analytics import (
     academic_period_spending,
     cash_flow_by_month,
     recurring_transactions,
-    savings_summary,
     spending_anomalies,
     spending_drivers,
 )
 from ..database import Database
+from .spending import render_spending_summary
 from .theme import CORAL, GOLD, PALETTE, PRIMARY
 from .widgets import (
-    _currency,
-    _kpi_card,
     _page_heading,
     _plotly_chart,
     _section_heading,
@@ -31,36 +29,16 @@ def _render_insights(database: Database, frame: pd.DataFrame) -> None:
         "DEEPER VIEW",
         "Advanced insights",
     )
+    render_spending_summary(database, key="insights", details=True)
     if frame.empty:
         st.info("Add or import transactions to unlock insights.")
         return
 
-    savings = savings_summary(frame)
-    first, second, third = st.columns(3)
-    with first:
-        _kpi_card(
-            "Recorded income",
-            _currency(savings["income"] or 0.0),
-            detail="In the selected range",
-        )
-    with second:
-        _kpi_card(
-            "Net outflow",
-            _currency(savings["net_outflow"] or 0.0),
-            detail="Expenses after refunds",
-        )
-    with third:
-        _kpi_card(
-            "Savings rate",
-            (
-                f"{float(savings['savings_rate']):.1f}%"
-                if savings["savings_rate"] is not None
-                else "Add income"
-            ),
-            detail="Based on recorded income",
-        )
-
-    _section_heading("What changed", "Category movement from the previous month")
+    _section_heading(
+        "What changed",
+        "Latest recorded month versus the previous month; use the pace "
+        "comparisons above for the reporting period",
+    )
     drivers = spending_drivers(frame)
     if drivers.empty:
         st.info("At least two months of data are needed.")

@@ -12,6 +12,7 @@ import streamlit as st
 from ..analytics import (
     transactions_frame,
 )
+from ..category_entry import category_entry
 from ..choices import choice_options
 from ..config import AppConfig
 from ..database import Database, DuplicateTransactionError
@@ -24,7 +25,6 @@ from ..models import (
 )
 from ..transaction_edits import TransactionChange, apply_changes, collect_changes
 from .state import (
-    _category_options,
     _clear_activity_filters,
     _get_transaction,
     _invalidate_activity_filters,
@@ -285,15 +285,9 @@ def _add_transaction_dialog(database: Database, config: AppConfig) -> None:
             ["expense", "refund", "income", "transfer"],
             key="add_transaction_type",
         )
-        description = st.text_input(
-            "Description",
-            placeholder="What was this for?",
-            key="add_transaction_description",
-        )
-        merchant = st.text_input(
-            "Merchant",
-            placeholder="Optional, improves recurring analysis",
-            key="add_transaction_merchant",
+        entry = category_entry(database, config)
+        description, merchant, category = (
+            entry[key] for key in ("description", "merchant", "category")
         )
         left, right = st.columns(2)
         amount = left.number_input(
@@ -304,12 +298,6 @@ def _add_transaction_dialog(database: Database, config: AppConfig) -> None:
             format="%.2f",
             placeholder="0.00",
             key="add_transaction_amount",
-        )
-        category = right.selectbox(
-            "Category",
-            _category_options(database, config),
-            key="add_transaction_category",
-            accept_new_options=True,
         )
         left, right = st.columns(2)
         account = left.selectbox(

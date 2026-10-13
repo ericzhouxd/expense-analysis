@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ..analytics import transactions_frame
+from ..categories import effective_config
 from ..config import load_config
 from ..database import Database
 from ..presentation import inject_theme
@@ -115,7 +117,7 @@ def render_app() -> None:
     )
     _inject_styles()
     database = _database()
-    config = load_config()
+    config = effective_config(database, load_config())
 
     st.html('<header class="masthead"><span class="wordmark" lang="zh-Hant">記帳</span></header>')
 
@@ -158,12 +160,16 @@ def render_app() -> None:
         _render_settings(database, config)
         return
 
+    if page in ("Overview", "Advanced insights"):
+        all_rows = database.list_transactions()
+        frame = transactions_frame(all_rows, config)
+        if page == "Overview":
+            _render_dashboard(database, frame, all_rows)
+        else:
+            _render_insights(database, frame)
+        return
     all_rows, rows, frame = _filtered_data(database, config)
-    if page == "Overview":
-        _render_dashboard(database, frame, all_rows)
-    elif page == "Transactions":
+    if page == "Transactions":
         _render_transactions(database, frame, config)
     elif page == "Import / Export":
         _render_import_export(database, rows, config)
-    elif page == "Advanced insights":
-        _render_insights(database, frame)
