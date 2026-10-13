@@ -14,7 +14,7 @@ from ..config import AppConfig
 from ..database import Database
 from ..import_export import CsvDecodeError, ImportPreview, decode_csv, export_csv, preview_csv
 from .state import _invalidate_activity_filters
-from .widgets import _page_heading, _section_heading
+from .widgets import _page_heading, _section
 
 
 def _preview_table(preview: ImportPreview) -> pd.DataFrame:
@@ -111,20 +111,18 @@ def _render_import_export(
         """
     )
 
-    _section_heading("Import a CSV", "Review every row before it is saved")
-    uploaded = st.file_uploader("Choose a CSV", type=["csv"])
-    import_bytes: bytes | None = uploaded.getvalue() if uploaded else None
+    with _section("import-csv", "Import a CSV", "Review every row before it is saved"):
+        uploaded = st.file_uploader("Choose a CSV", type=["csv"])
+        import_bytes: bytes | None = uploaded.getvalue() if uploaded else None
+        if import_bytes:
+            _render_csv_preview(database, import_bytes, config)
 
-    if import_bytes:
-        _render_csv_preview(database, import_bytes, config)
-
-    st.divider()
-    _section_heading("Export a local backup", "Keep the downloaded file secure")
-    st.caption("The exported CSV contains private spending data. Store it securely.")
-    st.download_button(
-        "Download transactions.csv",
-        data=export_csv(rows),
-        file_name=f"expenses-{date.today().isoformat()}.csv",
-        mime="text/csv",
-        disabled=not rows,
-    )
+    with _section("export-backup", "Export a local backup", "Keep the downloaded file secure"):
+        st.caption("The exported CSV contains private spending data. Store it securely.")
+        st.download_button(
+            "Download transactions.csv",
+            data=export_csv(rows),
+            file_name=f"expenses-{date.today().isoformat()}.csv",
+            mime="text/csv",
+            disabled=not rows,
+        )

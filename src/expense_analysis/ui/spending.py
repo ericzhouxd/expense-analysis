@@ -8,7 +8,7 @@ import streamlit as st
 from ..database import Database
 from ..spending_plan import month_after
 from ..spending_summary import spending_summary
-from .widgets import _currency, _kpi_card_markup, _section_heading
+from .widgets import _currency, _kpi_card_markup, _section
 
 
 def render_spending_summary(database: Database, *, key: str, details: bool = False) -> dict:
@@ -83,61 +83,65 @@ def render_spending_summary(database: Database, *, key: str, details: bool = Fal
         "A planning guide, not a hard spending limit or a bank balance."
     )
     if details:
-        _section_heading(
-            "School-year pool", "Paid bills replace reserves; they are never deducted twice"
-        )
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {"Item": label, "Amount": _currency(summary[field] / 100)}
-                    for label, field in [
-                        ("Starting pool", "pool"),
-                        ("Spent so far", "year_spent"),
-                        ("Unpaid commitments", "unpaid"),
-                        ("Protected buffer", "buffer"),
-                        ("Available after commitments", "available"),
-                    ]
-                ]
-            ),
-            hide_index=True,
-            width="stretch",
-        )
-        _section_heading(
-            "Pace and comparisons", "Benchmarks are reference points, not spending limits"
-        )
-        a, b, c = st.columns(3)
-        a.metric("Quarter spending so far", _currency(summary["quarter_spent"] / 100))
-        b.metric("Quarter-end outlook", _currency(summary["projected_quarter"] / 100))
-        c.metric("School-year outlook", _currency(summary["projected_year"] / 100))
-        st.caption(
-            "Outlooks keep planned bill reserves and extend this quarter’s "
-            "daily everyday spending pace. Early-quarter estimates can be "
-            "noisy."
-        )
-        if summary["benchmark"]:
-            st.write(
-                f"Academic-year spending: {_currency(summary['academic_spent'] / 100)} · "
-                f"UCLA reference through this point: "
-                f"{_currency(summary['benchmark_pace'] / 100)} · "
-                f"Full nine-month reference: {_currency(summary['benchmark'] / 100)}."
-            )
-            st.caption(
-                f"Saved {plan.reference.get('year', '')} UCLA reference, spread "
-                f"evenly over nine months for comparison; actual tuition and housing "
-                f"payments are uneven. Summer is excluded from this comparison."
-            )
-        if summary["year_comparisons"]:
+        with _section(
+            "school-year-pool",
+            "School-year pool",
+            "Paid bills replace reserves; they are never deducted twice",
+        ):
             st.dataframe(
-                pd.DataFrame(summary["year_comparisons"]),
+                pd.DataFrame(
+                    [
+                        {"Item": label, "Amount": _currency(summary[field] / 100)}
+                        for label, field in [
+                            ("Starting pool", "pool"),
+                            ("Spent so far", "year_spent"),
+                            ("Unpaid commitments", "unpaid"),
+                            ("Protected buffer", "buffer"),
+                            ("Available after commitments", "available"),
+                        ]
+                    ]
+                ),
                 hide_index=True,
                 width="stretch",
-                column_config={"Net spent": st.column_config.NumberColumn(format="$%.2f")},
             )
+        with _section(
+            "pace-comparisons",
+            "Pace and comparisons",
+            "Benchmarks are reference points, not spending limits",
+        ):
+            a, b, c = st.columns(3)
+            a.metric("Quarter spending so far", _currency(summary["quarter_spent"] / 100))
+            b.metric("Quarter-end outlook", _currency(summary["projected_quarter"] / 100))
+            c.metric("School-year outlook", _currency(summary["projected_year"] / 100))
             st.caption(
-                "Previous school years use the same start month through the same "
-                "calendar day, using original transaction dates. Missing records "
-                "are not estimated; payment allocations may affect comparability."
+                "Outlooks keep planned bill reserves and extend this quarter’s "
+                "daily everyday spending pace. Early-quarter estimates can be "
+                "noisy."
             )
-        else:
-            st.caption("No previous-school-year records for this comparable date range yet.")
+            if summary["benchmark"]:
+                st.write(
+                    f"Academic-year spending: {_currency(summary['academic_spent'] / 100)} · "
+                    f"UCLA reference through this point: "
+                    f"{_currency(summary['benchmark_pace'] / 100)} · "
+                    f"Full nine-month reference: {_currency(summary['benchmark'] / 100)}."
+                )
+                st.caption(
+                    f"Saved {plan.reference.get('year', '')} UCLA reference, spread "
+                    f"evenly over nine months for comparison; actual tuition and housing "
+                    f"payments are uneven. Summer is excluded from this comparison."
+                )
+            if summary["year_comparisons"]:
+                st.dataframe(
+                    pd.DataFrame(summary["year_comparisons"]),
+                    hide_index=True,
+                    width="stretch",
+                    column_config={"Net spent": st.column_config.NumberColumn(format="$%.2f")},
+                )
+                st.caption(
+                    "Previous school years use the same start month through the same "
+                    "calendar day, using original transaction dates. Missing records "
+                    "are not estimated; payment allocations may affect comparability."
+                )
+            else:
+                st.caption("No previous-school-year records for this comparable date range yet.")
     return summary

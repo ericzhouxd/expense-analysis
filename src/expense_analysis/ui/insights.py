@@ -20,7 +20,7 @@ from .theme import CORAL, GOLD, PALETTE, PRIMARY
 from .widgets import (
     _page_heading,
     _plotly_chart,
-    _section_heading,
+    _section,
 )
 
 
@@ -34,108 +34,113 @@ def _render_insights(database: Database, frame: pd.DataFrame) -> None:
         st.info("Add or import transactions to unlock insights.")
         return
 
-    _section_heading(
+    with _section(
+        "what-changed",
         "What changed",
         "Latest recorded month versus the previous month; use the pace "
         "comparisons above for the reporting period",
-    )
-    drivers = spending_drivers(frame)
-    if drivers.empty:
-        st.info("At least two months of data are needed.")
-    else:
-        st.dataframe(
-            drivers.head(8),
-            hide_index=True,
-            width="stretch",
-            column_config={
-                "current": st.column_config.NumberColumn("Latest month", format="$%.2f"),
-                "previous": st.column_config.NumberColumn("Previous month", format="$%.2f"),
-                "change": st.column_config.NumberColumn("Change", format="$%.2f"),
-                "percent_change": st.column_config.NumberColumn("Change %", format="%.1f%%"),
-            },
-        )
+    ):
+        drivers = spending_drivers(frame)
+        if drivers.empty:
+            st.info("At least two months of data are needed.")
+        else:
+            st.dataframe(
+                drivers.head(8),
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "current": st.column_config.NumberColumn("Latest month", format="$%.2f"),
+                    "previous": st.column_config.NumberColumn("Previous month", format="$%.2f"),
+                    "change": st.column_config.NumberColumn("Change", format="$%.2f"),
+                    "percent_change": st.column_config.NumberColumn("Change %", format="%.1f%%"),
+                },
+            )
 
     left, right = st.columns(2)
     with left:
-        _section_heading("Likely recurring charges", "Stable timing and amounts")
-        recurring = recurring_transactions(frame)
-        if recurring.empty:
-            st.info("No stable recurring pattern detected yet.")
-        else:
-            st.dataframe(
-                recurring,
-                hide_index=True,
-                width="stretch",
-                column_config={
-                    "average_amount": st.column_config.NumberColumn("Average", format="$%.2f"),
-                    "median_interval_days": st.column_config.NumberColumn(
-                        "Interval", format="%.0f days"
-                    ),
-                },
-            )
+        with _section("recurring-charges", "Likely recurring charges", "Stable timing and amounts"):
+            recurring = recurring_transactions(frame)
+            if recurring.empty:
+                st.info("No stable recurring pattern detected yet.")
+            else:
+                st.dataframe(
+                    recurring,
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "average_amount": st.column_config.NumberColumn("Average", format="$%.2f"),
+                        "median_interval_days": st.column_config.NumberColumn(
+                            "Interval", format="%.0f days"
+                        ),
+                    },
+                )
     with right:
-        _section_heading("Unusual purchases", "Large relative to their category")
-        anomalies = spending_anomalies(frame)
-        if anomalies.empty:
-            st.info("No high-confidence anomalies detected.")
-        else:
-            st.dataframe(
-                anomalies,
-                hide_index=True,
-                width="stretch",
-                column_config={
-                    "amount": st.column_config.NumberColumn(format="$%.2f"),
-                    "typical_amount": st.column_config.NumberColumn("Typical", format="$%.2f"),
-                    "anomaly_score": st.column_config.NumberColumn("Score", format="%.1f"),
-                },
+        with _section("unusual-purchases", "Unusual purchases", "Large relative to their category"):
+            anomalies = spending_anomalies(frame)
+            if anomalies.empty:
+                st.info("No high-confidence anomalies detected.")
+            else:
+                st.dataframe(
+                    anomalies,
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "amount": st.column_config.NumberColumn(format="$%.2f"),
+                        "typical_amount": st.column_config.NumberColumn("Typical", format="$%.2f"),
+                        "anomaly_score": st.column_config.NumberColumn("Score", format="%.1f"),
+                    },
+                )
+
+    with _section("cash-flow", "Cash flow", "Income, refunds, expenses, and the resulting balance"):
+        cash_flow = cash_flow_by_month(frame)
+        if not cash_flow.empty:
+            cash_flow["month_start"] = cash_flow["month"].dt.to_timestamp()
+            chart = go.Figure()
+            chart.add_bar(
+                x=cash_flow["month_start"],
+                y=cash_flow["income"] + cash_flow["refunds"],
+                name="Income + refunds",
+                marker_color=PRIMARY,
             )
+            chart.add_bar(
+                x=cash_flow["month_start"],
+                y=-cash_flow["expenses"],
+                name="Expenses",
+                marker_color=CORAL,
+            )
+            chart.add_scatter(
+                x=cash_flow["month_start"],
+                y=cash_flow["net_cash_flow"],
+                name="Net cash flow",
+                mode="lines+markers",
+                line={"color": GOLD, "width": 2.5},
+            )
+            chart.update_layout(barmode="relative")
+            chart.update_yaxes(tickprefix="$")
+            _plotly_chart(chart, key="cash_flow")
 
-    _section_heading("Cash flow", "Income, refunds, expenses, and the resulting balance")
-    cash_flow = cash_flow_by_month(frame)
-    if not cash_flow.empty:
-        cash_flow["month_start"] = cash_flow["month"].dt.to_timestamp()
-        chart = go.Figure()
-        chart.add_bar(
-            x=cash_flow["month_start"],
-            y=cash_flow["income"] + cash_flow["refunds"],
-            name="Income + refunds",
-            marker_color=PRIMARY,
-        )
-        chart.add_bar(
-            x=cash_flow["month_start"],
-            y=-cash_flow["expenses"],
-            name="Expenses",
-            marker_color=CORAL,
-        )
-        chart.add_scatter(
-            x=cash_flow["month_start"],
-            y=cash_flow["net_cash_flow"],
-            name="Net cash flow",
-            mode="lines+markers",
-            line={"color": GOLD, "width": 2.5},
-        )
-        chart.update_layout(barmode="relative")
-        chart.update_yaxes(tickprefix="$")
-        _plotly_chart(chart, key="cash_flow")
-
-    _section_heading("Academic-period comparison", "A dynamic view of spending across terms")
-    academic = academic_period_spending(frame)
-    if not academic.empty:
-        academic_chart = px.bar(
-            academic,
-            x="academic_period",
-            y="spending",
-            color="academic_year",
-            text_auto="$.3s",
-            labels={
-                "academic_period": "Academic period",
-                "spending": "Personal spending",
-                "academic_year": "Academic year",
-            },
-            color_discrete_sequence=PALETTE,
-        )
-        academic_chart.update_yaxes(tickprefix="$")
-        _plotly_chart(academic_chart, key="academic_periods")
+    with _section(
+        "academic-comparison",
+        "Academic-period comparison",
+        "A dynamic view of spending across terms",
+    ):
+        academic = academic_period_spending(frame)
+        if not academic.empty:
+            academic_chart = px.bar(
+                academic,
+                x="academic_period",
+                y="spending",
+                color="academic_year",
+                text_auto="$.3s",
+                labels={
+                    "academic_period": "Academic period",
+                    "spending": "Personal spending",
+                    "academic_year": "Academic year",
+                },
+                color_discrete_sequence=PALETTE,
+            )
+            academic_chart.update_yaxes(tickprefix="$")
+            _plotly_chart(academic_chart, key="academic_periods")
 
     duplicate_groups = database.duplicate_groups()
     if duplicate_groups:

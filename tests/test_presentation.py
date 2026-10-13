@@ -15,6 +15,12 @@ def _theme_css():
     return " ".join(css.replace('"', "'").split())
 
 
+def _css_rule(css: str, selector: str) -> str:
+    """The declaration block for one selector, whitespace-normalised."""
+    start = css.index(f"{selector} {{")
+    return css[start : css.index("}", start)]
+
+
 @pytest.mark.parametrize("remaining", [12345, 0, -12345, 123456789012])
 def test_budget_panel_preserves_amount_and_state(remaining):
     markup = budget_hero_markup(
@@ -137,3 +143,23 @@ def test_navigation_hides_the_native_radio_circle_beside_the_page_counter():
         "[data-testid='stMarkdownContainer'])" in css
     )
     assert "> div:first-child { display: none !important; }" in css
+
+
+def test_sections_are_stacked_headers_inside_one_painted_surface():
+    """#10: the heading stacks over its note, and the panel paints the whole block."""
+    css = _theme_css()
+
+    heading = _css_rule(css, ".section-heading")
+    # Stacks the two lines and drops the metal band that made a label look chopped.
+    assert "display: block" in heading
+    assert "background: none" in heading
+    assert "border-bottom: 1px solid var(--divider)" in heading
+
+    note = _css_rule(css, ".section-heading span")
+    assert "display: block" in note
+    assert "color: var(--muted)" in note
+
+    panel = _css_rule(css, "[class*='st-key-section-']")
+    assert "border: 1px solid var(--line)" in panel
+    assert "background: var(--panel)" in panel
+    assert "padding:" in panel

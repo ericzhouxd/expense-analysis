@@ -87,7 +87,8 @@ JSON.stringify((() => {
     + '[data-testid=stCaptionContainer] p, '
     + '[data-testid=stAlert] p, .soft-empty span, .empty-card p, '
     + '.balance-panel h2, .balance-panel p, .balance-value, .summary-row dt, '
-    + '.summary-row dd, .usage-label, .usage-note, .theme-control-label';
+    + '.summary-row dd, .usage-label, .usage-note, .theme-control-label, '
+    + '.section-heading h2, .section-heading span';
   return [...document.querySelectorAll(selectors)]
     .filter(el => el.getClientRects().length && el.textContent.trim())
     .map(el => {
