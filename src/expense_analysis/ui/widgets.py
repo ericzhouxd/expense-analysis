@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import html
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -157,9 +159,27 @@ def _kpi_card(
     )
 
 
-def _section_heading(title: str, description: str = "") -> None:
+def _section_heading_markup(title: str, description: str = "") -> str:
     description_html = f"<span>{html.escape(description)}</span>" if description else ""
-    st.html(f'<div class="section-heading"><h2>{html.escape(title)}</h2>{description_html}</div>')
+    return f'<div class="section-heading"><h2>{html.escape(title)}</h2>{description_html}</div>'
+
+
+def _section_heading(title: str, description: str = "") -> None:
+    """Render a standalone heading, for the rare section that cannot be grouped."""
+    st.html(_section_heading_markup(title, description))
+
+
+@contextmanager
+def _section(key: str, title: str, description: str = "") -> Iterator[None]:
+    """Group a heading and its content into one bordered surface.
+
+    The container carries a ``st-key-section-<key>`` class so theme.css can paint
+    the whole block: title stacked over the description, then the content. Keys
+    must be unique within a page run.
+    """
+    with st.container(key=f"section-{key}"):
+        st.html(_section_heading_markup(title, description))
+        yield
 
 
 def _safe_inline(value: object) -> str:

@@ -856,3 +856,65 @@ def test_live_category_suggestions_manual_override_and_save(page):
         == ""
     )
     page.press("Escape", "Escape", 27)
+
+
+# Every page that groups content under a heading, and the fewest panels it shows
+# with the synthetic seed. Transactions is a single list with no sections.
+SECTION_PAGES = {
+    "Overview": 4,
+    "Import / Export": 2,
+    "Budgets": 1,
+    "Advanced insights": 5,
+    "Settings": 1,
+}
+
+MEASURE_SECTIONS = r"""
+JSON.stringify([...document.querySelectorAll('.section-heading')].map(el => {
+  const panel = el.closest("[class*='st-key-section-']");
+  const title = el.querySelector('h2');
+  const note = el.querySelector('span');
+  const panelStyle = panel ? getComputedStyle(panel) : null;
+  const titleStyle = title ? getComputedStyle(title) : null;
+  const titleBox = title ? title.getBoundingClientRect() : null;
+  const noteBox = note ? note.getBoundingClientRect() : null;
+  return {
+    title: title ? title.textContent.trim() : '',
+    inPanel: !!panel,
+    panelPadding: panelStyle ? parseFloat(panelStyle.paddingTop) : 0,
+    panelBorder: panelStyle ? parseFloat(panelStyle.borderTopWidth) : 0,
+    titleSize: titleStyle ? titleStyle.fontSize : '',
+    titleBottom: titleBox ? titleBox.bottom : null,
+    noteTop: noteBox ? noteBox.top : null,
+  };
+}))
+"""
+
+
+def test_sections_paint_as_one_panel_with_a_stacked_heading(page):
+    """#10: section labels were chopped strips, so each section is now one surface."""
+    measured: dict[str, list[dict]] = {}
+    for name, minimum in SECTION_PAGES.items():
+        page.select_page(name)
+        page.wait_js("document.querySelector('.stApp').dataset.testScriptState === 'notRunning'")
+        # Poll for the panels rather than awaiting animation frames: this tab paints
+        # lazily, and a pending frame request would block the whole suite.
+        page.wait_js(f"document.querySelectorAll('.section-heading').length >= {minimum}")
+        sections = page.measure(MEASURE_SECTIONS)
+        assert len(sections) >= minimum, (name, sections)
+        measured[name] = sections
+
+    for name, sections in measured.items():
+        for section in sections:
+            # The heading lives inside the painted panel rather than floating on the page.
+            assert section["inPanel"], (name, section)
+            assert section["panelPadding"] > 0, (name, section)
+            assert section["panelBorder"] > 0, (name, section)
+            assert section["title"], (name, section)
+            if section["noteTop"] is not None:
+                # The note sits under the title instead of competing for its line.
+                assert section["noteTop"] >= section["titleBottom"] - TOLERANCE, (name, section)
+
+    # One title size everywhere: the tabs share a single section language.
+    assert (
+        len({section["titleSize"] for sections in measured.values() for section in sections}) == 1
+    )
