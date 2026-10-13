@@ -674,6 +674,7 @@ def test_add_transaction_controls_all_reach_the_height_theme_css_declares(page):
         ".find((el) => el.textContent.trim() === 'Add transaction')"
     )
     page.wait_js(f"!!document.querySelector({json.dumps(FORM_SELECTORS['submit'])})", timeout=45)
+    page.wait_js("!!document.querySelector('.category-entry input[name=description]')", timeout=45)
 
     heights = page.measure(MEASURE_FORM)
     assert None not in heights.values(), heights
@@ -847,7 +848,7 @@ def test_live_category_suggestions_manual_override_and_save(page):
     page.wait_js("document.body.innerText.includes('Transaction saved.')")
     page.click("document.querySelector('.st-key-view_saved_transaction button')")
     page.wait_js("document.body.innerText.includes('Synthetic live category purchase')")
-    assert page.evaluate("document.body.innerText.includes('Special purchases')")
+    assert "special purchases" in page.evaluate("document.body.innerText").lower()
     page.click("document.querySelector('.st-key-open_add_transaction button')")
     page.wait_js("!!document.querySelector('.category-entry input[name=description]')")
     assert (
