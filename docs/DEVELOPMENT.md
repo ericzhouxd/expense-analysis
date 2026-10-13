@@ -75,6 +75,13 @@ table fields use creatable multiselect columns; transaction validation enforces 
 value per field, while budget bills may map multiple categories. Calculation enums
 (transaction type, billing cycle, and reference presets) keep fixed choices.
 
+`assets/date_bridge.html` adds a native calendar companion to the Add dialog's
+strict text date field. Calendar selections dispatch the normal input events;
+typed dates remain unchanged until server validation. The bridge handles native
+input/change events and keyboard activation, disconnects on reruns, and uses no
+network or storage. Date bounds must stay aligned with `models.py`. The table's
+Date column reserves enough width for the browser's native date editor and icon.
+
 The three families are Departure Mono (UI), Anton (condensed amounts), and a
 two-character Noto Sans TC subset (記帳 wordmark). Fonts and their OFL licenses live
 in `static/fonts/`. Static serving is enabled only for public visual assets:
@@ -160,6 +167,20 @@ The interface balances a sharp editorial grid with early-web character:
 - One primary visual message per section
 - Advanced comparisons hidden behind progressive disclosure
 - List view for reading and data editor for bulk changes
+
+Color roles are shared across native controls and custom panels. Lime marks the
+active navigation, primary actions, and featured amounts. Sage indicates positive
+status; amber indicates caution; coral indicates an overage or error. Ordinary
+notices use a subdued neutral green-gray. Summary amounts stay neutral unless
+their status calls for emphasis. Keep row dividers quieter than control borders,
+and place status badges on a panel-colored background for legibility over lime.
+
+`tests/test_theme_colors.py` checks text and chart palette contrast in both themes.
+`tests/test_theme_audit.py` checks rendered text across all six pages using a
+temporary synthetic ledger and saved budget. Run it with `uv run pytest -m rendered
+tests/test_theme_audit.py`; optionally set `THEME_AUDIT_SCREENSHOTS` to a temporary
+directory to capture page screenshots. The browser fixtures use default config
+and never load the private `config.toml`.
 
 Custom visual fragments must be rendered with `st.html()`. Do not pass indented
 HTML through `st.markdown()`: Markdown may display it as a code block. Use

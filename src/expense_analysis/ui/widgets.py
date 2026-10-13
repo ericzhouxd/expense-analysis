@@ -69,15 +69,21 @@ def _style_figure(figure: go.Figure, *, height: int = 380) -> go.Figure:
     )
     figure.update_traces(
         marker_pattern_shape=".",
-        marker_pattern_solidity=0.10,
+        marker_pattern_solidity=0.08,
+        marker_pattern_fillmode="overlay",
+        marker_pattern_fgcolor="rgba(9,11,8,0.22)",
         marker_line_width=1,
         marker_line_color=PRIMARY_DARK,
+        insidetextfont_color="#090B08",
         selector={"type": "bar"},
     )
     bar_index = 0
     for trace in figure.data:
         if trace.type == "bar":
             trace.marker.pattern.shape = (".", "/", "", "\\")[bar_index % 4]
+            if trace.marker.color is not None:
+                trace.marker.pattern.bgcolor = trace.marker.color
+                trace.marker.line.color = trace.marker.color
             bar_index += 1
         elif trace.type == "scatter" and "markers" in (trace.mode or ""):
             trace.marker.update(size=7, symbol="square", line={"width": 1, "color": PRIMARY_DARK})

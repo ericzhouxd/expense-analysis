@@ -58,6 +58,11 @@ def _clear_focused_transaction() -> None:
     st.session_state.pop("focused_transaction_id", None)
 
 
+def _clear_activity_filters() -> None:
+    _clear_focused_transaction()
+    _invalidate_activity_filters()
+
+
 def _filtered_data(
     database: Database, config: AppConfig
 ) -> tuple[list[dict[str, object]], list[dict[str, object]], pd.DataFrame]:
@@ -77,7 +82,7 @@ def _filtered_data(
         st.session_state[_ACTIVITY_FILTER_SIGNATURE] = signature
         _invalidate_activity_filters()
     filter_generation = st.session_state.get(_ACTIVITY_FILTER_GENERATION, 0)
-    with st.sidebar.expander("Filter activity", expanded=False):
+    with st.sidebar.expander("Filters", expanded=False):
         selected_range = st.date_input(
             "Date range",
             value=(minimum, maximum),
@@ -119,6 +124,7 @@ def _filtered_data(
             key=f"activity_accounts_{filter_generation}",
             on_change=_clear_focused_transaction,
         )
+        st.button("Clear filters", key="clear_activity_filters", on_click=_clear_activity_filters)
     if (
         start == minimum
         and end == maximum

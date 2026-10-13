@@ -30,7 +30,6 @@ def _render_insights(database: Database, frame: pd.DataFrame) -> None:
     _page_heading(
         "DEEPER VIEW",
         "Advanced insights",
-        "Patterns and exceptions to explore when you want more detail.",
     )
     if frame.empty:
         st.info("Add or import transactions to unlock insights.")

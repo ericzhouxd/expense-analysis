@@ -131,6 +131,7 @@ def render_app() -> None:
         ],
         label_visibility="collapsed",
         key="main_navigation",
+        width="stretch",
     )
     st.sidebar.divider()
     with st.sidebar:

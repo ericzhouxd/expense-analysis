@@ -2,31 +2,31 @@
 
 from __future__ import annotations
 
-PRIMARY = "#859A19"
+PRIMARY = "#768632"
 
 PRIMARY_DARK = "#657900"
 
-SAGE = "#A6AC92"
+SAGE = "#778575"
 
-MINT = "rgba(133,154,25,0.16)"
+MINT = "rgba(118,134,50,0.12)"
 
-GOLD = "#B79738"
+GOLD = "#9C792F"
 
-CORAL = "#CA6353"
+CORAL = "#B66556"
 
 GRID = "rgba(128,132,120,0.25)"
 
 PALETTE = (
     PRIMARY,
     GOLD,
-    "#718E7E",
-    "#9F7A66",
-    "#758DA3",
-    "#9B8AAD",
-    "#7F9972",
+    "#508477",
+    "#987161",
+    "#617F9E",
+    "#91739F",
+    "#788349",
     CORAL,
-    "#A39A78",
-    "#8A928C",
+    "#8D8160",
+    "#77827A",
 )
 
 PLOTLY_CONFIG = {

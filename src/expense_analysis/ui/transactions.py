@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import asdict
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -15,10 +15,17 @@ from ..analytics import (
 from ..choices import choice_options
 from ..config import AppConfig
 from ..database import Database, DuplicateTransactionError
-from ..models import TransactionDraft, parse_amount_cents, validate_transaction_date
+from ..models import (
+    MAX_FUTURE_TRANSACTION_DAYS,
+    MIN_TRANSACTION_DATE,
+    TransactionDraft,
+    parse_amount_cents,
+    validate_transaction_date,
+)
 from ..transaction_edits import TransactionChange, apply_changes, collect_changes
 from .state import (
     _category_options,
+    _clear_activity_filters,
     _get_transaction,
     _invalidate_activity_filters,
     _reset_transaction_editor,
@@ -107,7 +114,6 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
         _page_heading(
             "ACTIVITY",
             "Transactions",
-            "Browse comfortably or switch to the editing table when you need it.",
         )
     with view_control:
         view = (
@@ -154,7 +160,21 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
             )
 
     if frame.empty:
-        st.info("No transactions match the current filters.")
+        has_transactions = database.count_transactions() > 0
+        with st.container(key="transaction_empty_state"):
+            message = (
+                "No transactions match the current filters."
+                if has_transactions
+                else "No Transactions"
+            )
+            st.html(f'<p class="transaction-empty-message">{message}</p>')
+            if has_transactions:
+                with st.container(horizontal=True, horizontal_alignment="center"):
+                    st.button(
+                        "Clear filters",
+                        key="clear_empty_transaction_filters",
+                        on_click=_clear_activity_filters,
+                    )
         return
     if view == "List":
         _transaction_list(frame, focused_transaction_id=focused_transaction_id)
@@ -201,7 +221,14 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
             "Delete": st.column_config.CheckboxColumn("Delete"),
             "ID": None,
             "Description": st.column_config.TextColumn("Description", required=True),
-            "Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD", required=True),
+            "Date": st.column_config.DateColumn(
+                "Date",
+                format="YYYY-MM-DD",
+                width=160,
+                min_value=MIN_TRANSACTION_DATE,
+                max_value=date.today() + timedelta(days=MAX_FUTURE_TRANSACTION_DAYS),
+                required=True,
+            ),
             "Amount": st.column_config.NumberColumn(
                 "Amount", min_value=0.01, step=0.01, format="$%.2f", required=True
             ),
