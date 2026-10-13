@@ -113,3 +113,34 @@ def test_import_reports_out_of_range_and_impossible_dates():
     errors = [row.errors for row in preview.rows]
     assert "Date must be between" in errors[0][0]
     assert "is not a recognised date" in errors[1][0]
+
+
+def test_import_uses_learned_merchant_history_for_unknown_labels():
+    content = (
+        b"Description,Date,Amount,Category,Merchant\n"
+        b"Synthetic latte,2026-07-30,4.25,Surprise,Corner Cafe\n"
+    )
+    preview = preview_csv(content, AppConfig(), merchant_suggestions={"corner cafe": "Dining Out"})
+    draft = preview.valid_drafts[0]
+    assert draft.category == "Dining Out"
+    assert "Imported category: Surprise" not in draft.notes
+
+
+def test_import_keeps_known_category_over_merchant_history():
+    content = (
+        b"Description,Date,Amount,Category,Merchant\n"
+        b"Synthetic latte,2026-07-30,4.25,Food,Corner Cafe\n"
+    )
+    preview = preview_csv(content, AppConfig(), merchant_suggestions={"corner cafe": "Dining Out"})
+    assert preview.valid_drafts[0].category == "Food"
+
+
+def test_import_ignores_merchant_suggestions_outside_the_vocabulary():
+    content = (
+        b"Description,Date,Amount,Category,Merchant\n"
+        b"Synthetic latte,2026-07-30,4.25,Surprise,Corner Cafe\n"
+    )
+    preview = preview_csv(content, AppConfig(), merchant_suggestions={"corner cafe": "Nonexistent"})
+    draft = preview.valid_drafts[0]
+    assert draft.category == "Uncategorized"
+    assert "Imported category: Surprise" in draft.notes

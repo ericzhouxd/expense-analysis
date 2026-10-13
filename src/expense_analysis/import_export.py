@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import AppConfig
-from .models import TransactionDraft, parse_amount_cents, parse_date
+from .models import TransactionDraft, normalize_text, parse_amount_cents, parse_date
 
 
 class CsvDecodeError(ValueError):
@@ -93,6 +93,7 @@ def preview_csv(
     config: AppConfig,
     existing_fingerprints: set[str] | None = None,
     category_mapping: dict[str, str] | None = None,
+    merchant_suggestions: dict[str, str] | None = None,
 ) -> ImportPreview:
     text = decode_csv(content)
     reader = csv.DictReader(io.StringIO(text))
@@ -135,6 +136,11 @@ def preview_csv(
         merchant = _value(normalized, "merchant")
         mapped = (category_mapping or {}).get(original_category)
         category = mapped or config.category_for(description, merchant, original_category)
+        if category == "Uncategorized" and merchant:
+            # Reuse learned merchant history so imports agree with the manual entry form.
+            suggestion = (merchant_suggestions or {}).get(normalize_text(merchant))
+            if suggestion and suggestion in config.categories:
+                category = suggestion
         if original_category and category == "Uncategorized":
             note = f"Imported category: {original_category}"
             notes = f"{notes}\n{note}".strip()
