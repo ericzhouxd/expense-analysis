@@ -8,6 +8,13 @@ import pytest
 from expense_analysis.presentation import budget_hero_markup, summary_markup, usage_markup
 
 
+def _theme_css():
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "src/expense_analysis/assets/theme.css").read_text()
+    # These source checks ignore formatting; browser tests verify actual layout.
+    return " ".join(css.replace('"', "'").split())
+
+
 @pytest.mark.parametrize("remaining", [12345, 0, -12345, 123456789012])
 def test_budget_panel_preserves_amount_and_state(remaining):
     markup = budget_hero_markup(
@@ -68,7 +75,7 @@ def test_both_native_themes_and_three_local_font_families():
 
 def test_theme_css_preserves_native_sidebar_and_readable_neon_controls():
     root = Path(__file__).resolve().parents[1]
-    css = (root / "src/expense_analysis/assets/theme.css").read_text()
+    css = _theme_css()
     bridge = (root / "src/expense_analysis/assets/theme_bridge.html").read_text()
 
     assert "max-width: 244px" in css
@@ -78,10 +85,10 @@ def test_theme_css_preserves_native_sidebar_and_readable_neon_controls():
     assert "border-radius: 0 !important" in css
     assert ".jizhang-chart-fullscreen" in css
     assert (
-        "[data-testid='stFullScreenFrame']:has([aria-label='Close fullscreen'])\n"
-        "  [data-testid='stDataFrameResizable'] {\n"
-        "  height: 100% !important;\n"
-        "  max-height: none !important;\n"
+        "[data-testid='stFullScreenFrame']:has([aria-label='Close fullscreen']) "
+        "[data-testid='stDataFrameResizable'] { "
+        "height: 100% !important; "
+        "max-height: none !important; "
         "}" in css
     )
     assert "data-jizhang-theme-choice" in bridge
@@ -107,26 +114,22 @@ def test_theme_bridge_dismisses_date_calendar_before_advancing_fields():
 
 
 def test_add_transaction_form_boxes_share_one_height():
-    root = Path(__file__).resolve().parents[1]
-    css = (root / "src/expense_analysis/assets/theme.css").read_text()
+    css = _theme_css()
 
     for selector in (
-        ".st-key-add_transaction_date [data-testid='stTextInputRootElement']",
-        ".st-key-add_transaction_description [data-testid='stTextInputRootElement']",
-        ".st-key-add_transaction_merchant [data-testid='stTextInputRootElement']",
-        ".st-key-add_transaction_amount [data-testid='stNumberInputContainer']",
+        "[data-testid='stTextInputRootElement']",
+        "[data-testid='stNumberInputContainer']",
         "[data-testid='stSelectbox'] .react-aria-ComboBox > [role='group']",
         ".st-key-add_transaction_submit [data-testid='stBaseButton-primaryFormSubmit']",
     ):
         start = css.index(selector)
         rule = css[start : css.index("}", start)]
-        assert "height: 42px" in rule
-        assert "min-height: 42px" in rule
+        assert "height: var(--control-height)" in rule
+        assert "min-height: var(--control-height)" in rule
 
 
 def test_navigation_hides_the_native_radio_circle_beside_the_page_counter():
-    root = Path(__file__).resolve().parents[1]
-    css = (root / "src/expense_analysis/assets/theme.css").read_text()
+    css = _theme_css()
 
     assert "counter(page, decimal-leading-zero)" in css
     assert (

@@ -176,6 +176,7 @@
   };
   const handleAddFormEnter = (event) => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return false;
+    if (event.target.closest?.('.date-calendar-control')) return false;
     const fields = addFieldSelectors.map((selector) => document.querySelector(selector));
     const index = fields.findIndex((field) => field?.contains(event.target));
     if (index < 0) return false;

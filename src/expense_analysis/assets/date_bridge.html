@@ -1,0 +1,78 @@
+<script>
+// A native calendar companion for the strict text field. Picking a day updates
+// the normal Streamlit input; typed text is never normalized or replaced on blur.
+(() => {
+  window.jizhangDateCleanup?.();
+  const selector = '.st-key-add_transaction_date [data-testid="stTextInputRootElement"]';
+  const localIso = date => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')].join('-');
+  const attach = () => {
+    const root = document.querySelector(selector);
+    if (!root || root.querySelector('.date-calendar-button')) return;
+    const text = root.querySelector('input');
+    if (!text) return;
+    const picker = document.createElement('input');
+    picker.type = 'date';
+    picker.className = 'date-calendar-native';
+    picker.tabIndex = -1;
+    picker.setAttribute('aria-label', 'Choose transaction date');
+    // Match the model's bounds; the server remains the authoritative validator.
+    picker.min = '1900-01-01';
+    const latest = new Date();
+    latest.setDate(latest.getDate() + 366);
+    picker.max = localIso(latest);
+    const control = document.createElement('span');
+    control.className = 'date-calendar-control';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'date-calendar-button';
+    button.setAttribute('aria-label', 'Open date calendar');
+    button.title = 'Choose a date from the calendar';
+    button.textContent = '▦';
+    control.append(button, picker);
+    const seed = () => {
+      // Seed only from a valid ISO date. Do not coerce an invalid typed date.
+      picker.value = /^\d{4}-\d{2}-\d{2}$/.test(text.value) ? text.value : '';
+      if (!picker.value || !picker.checkValidity()) picker.value = localIso(new Date());
+    };
+    button.addEventListener('click', event => {
+      if (event.target === picker) return;
+      seed();
+      // Native popup keyboard input must belong to the date field, not the button.
+      picker.focus({preventScroll: true});
+      if (picker.showPicker) picker.showPicker();
+      else picker.click();
+    });
+    // The transparent native input is also a direct pointer target, including
+    // browsers that don't implement showPicker(). Keep its current month in sync.
+    picker.addEventListener('pointerdown', seed);
+    const selectDate = () => {
+      if (!picker.value || !picker.checkValidity()) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(text, picker.value);
+      text.dispatchEvent(new Event('input', {bubbles: true}));
+      text.dispatchEvent(new Event('change', {bubbles: true}));
+      text.focus();
+    };
+    picker.addEventListener('input', selectDate);
+    picker.addEventListener('change', selectDate);
+    root.append(control);
+  };
+  const observer = new MutationObserver(attach);
+  observer.observe(document.body, {childList: true, subtree: true});
+  // Streamlit's text-field Enter handler otherwise consumes keyboard activation
+  // of a button embedded beside the input. Handle it before that form handler.
+  const onKey = event => {
+    if (!event.target.matches?.('.date-calendar-button') || !['Enter', ' '].includes(event.key)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    event.target.click();
+  };
+  window.addEventListener('keydown', onKey, true);
+  attach();
+  window.jizhangDateCleanup = () => {
+    observer.disconnect();
+    window.removeEventListener('keydown', onKey, true);
+    document.querySelectorAll('.date-calendar-control').forEach(control => control.remove());
+  };
+})();
+</script>

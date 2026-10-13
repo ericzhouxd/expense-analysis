@@ -307,7 +307,7 @@ def _render_dashboard(
                     color_discrete_map={
                         "Personal": PRIMARY,
                         "Fixed": GOLD,
-                        "Uncategorized": "#A3AAA5",
+                        "Uncategorized": SAGE,
                     },
                     labels={"spending": "Spending", "spending_class": ""},
                 )

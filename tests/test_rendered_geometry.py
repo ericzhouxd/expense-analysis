@@ -207,9 +207,19 @@ def _get(url: str, timeout: float = 2.0) -> str | None:
         return None
 
 
-def _wait_for(url: str, *, timeout: float, interval: float = 0.25) -> None:
+def _wait_for(
+    url: str,
+    *,
+    timeout: float,
+    interval: float = 0.25,
+    process: subprocess.Popen[bytes] | None = None,
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if process is not None and process.poll() is not None:
+            raise AssertionError(
+                f"Process exited with code {process.returncode} before {url} became reachable"
+            )
         if _get(url) is not None:
             return
         time.sleep(interval)
@@ -234,6 +244,8 @@ class Cdp:
                 raise AssertionError(f"CDP command {method} timed out")
             message = json.loads(self._ws.recv(timeout=remaining))
             if message.get("id") == message_id:
+                if "error" in message:
+                    raise AssertionError(f"CDP command {method} failed: {message['error']}")
                 return message
 
     def evaluate(self, expression: str):
@@ -241,6 +253,10 @@ class Cdp:
             "Runtime.evaluate",
             {"expression": expression, "returnByValue": True, "awaitPromise": True},
         )
+        if "exceptionDetails" in result["result"]:
+            raise AssertionError(
+                f"Browser JavaScript failed: {result['result']['exceptionDetails']}"
+            )
         return result["result"]["result"].get("value")
 
     def measure(self, expression: str) -> dict:
@@ -255,19 +271,27 @@ class Cdp:
         raise AssertionError(f"condition never held: {expression}")
 
     def centre_of(self, expression: str, *, timeout: float = 30.0) -> tuple[float, float]:
-        """Centre of the first match, waiting out a Streamlit re-render if needed."""
+        """Wait until the target is stationary and its centre receives pointer events."""
         deadline = time.monotonic() + timeout
-        while True:
+        previous = None
+        stable_since = time.monotonic()
+        while time.monotonic() < deadline:
             centre = self.evaluate(
                 "(() => { const el = " + expression + "; if (!el) return null;"
                 " const r = el.getBoundingClientRect();"
-                " return [r.x + r.width / 2, r.y + r.height / 2]; })()"
+                " if (!r.width || !r.height) return null;"
+                " const x = r.x + r.width / 2, y = r.y + r.height / 2;"
+                " const hit = document.elementFromPoint(x, y);"
+                " if (!hit || !(el === hit || el.contains(hit))) return null;"
+                " return [x, y]; })()"
             )
-            if centre:
+            if centre is None or centre != previous:
+                stable_since = time.monotonic()
+            elif time.monotonic() - stable_since >= 0.2:
                 return float(centre[0]), float(centre[1])
-            if time.monotonic() >= deadline:
-                raise AssertionError(f"element not found: {expression}")
-            time.sleep(0.25)
+            previous = centre
+            time.sleep(0.05)
+        raise AssertionError(f"element never became stable and clickable: {expression}")
 
     def click(self, expression: str) -> None:
         """Click with real mouse events, so Streamlit sees a trusted gesture."""
@@ -286,6 +310,16 @@ class Cdp:
             )
 
     def press(self, key: str, code: str, virtual_key: int) -> None:
+        native_key = virtual_key
+        if sys.platform == "darwin":
+            native_key = {
+                "Enter": 36,
+                "Escape": 53,
+                "ArrowLeft": 123,
+                "ArrowRight": 124,
+                "ArrowDown": 125,
+                "ArrowUp": 126,
+            }[code]
         for event_type in ("keyDown", "keyUp"):
             self._command(
                 "Input.dispatchKeyEvent",
@@ -294,7 +328,7 @@ class Cdp:
                     "key": key,
                     "code": code,
                     "windowsVirtualKeyCode": virtual_key,
-                    "nativeVirtualKeyCode": virtual_key,
+                    "nativeVirtualKeyCode": native_key,
                 },
             )
 
@@ -303,9 +337,16 @@ class Cdp:
 
     def select_page(self, name: str, *, timeout: float = 45.0) -> None:
         self.click(self.page_for(name))
+        title = {"Import / Export": "Import and export", "Settings": "Settings and privacy"}.get(
+            name, name
+        )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self.measure(MEASURE_PAGE)["checkedPage"] == name:
+            if self.measure(MEASURE_PAGE)["checkedPage"] == name and self.evaluate(
+                "document.querySelector('.page-heading h1')?.textContent === "
+                + json.dumps(title)
+                + " && document.querySelector('.stApp')?.dataset.testScriptState === 'notRunning'"
+            ):
                 return
             time.sleep(0.3)
         raise AssertionError(f"clicking {name!r} never selected it")
@@ -347,7 +388,12 @@ def _seed_database(env: dict) -> None:
 
 
 @pytest.fixture(scope="module")
-def app_url():
+def rendered_seed():
+    return _seed_database
+
+
+@pytest.fixture(scope="module")
+def app_url(rendered_seed):
     """Boot the real app on a free port against a throwaway data directory."""
     with tempfile.TemporaryDirectory(
         prefix="expense-rendered-", ignore_cleanup_errors=True
@@ -358,7 +404,17 @@ def app_url():
             "EXPENSE_ANALYSIS_OUTPUT_DIR": str(Path(work) / "output"),
         }
         Path(env["EXPENSE_ANALYSIS_DATA_DIR"]).mkdir(parents=True)
-        _seed_database(env)
+        rendered_seed(env)
+
+        # The browser audit must not load the user's private config.toml either.
+        entrypoint = Path(work) / "audit_app.py"
+        entrypoint.write_text(
+            "from expense_analysis import ui\n"
+            "from expense_analysis.config import AppConfig\n"
+            "ui.load_config = AppConfig\n"
+            "ui.render_app()\n"
+        )
+        (Path(work) / "static").symlink_to(PROJECT_ROOT / "static", target_is_directory=True)
 
         port = _free_port()
         server = subprocess.Popen(
@@ -367,7 +423,7 @@ def app_url():
                 "-m",
                 "streamlit",
                 "run",
-                "app.py",
+                str(entrypoint),
                 "--server.headless=true",
                 "--server.address=127.0.0.1",
                 f"--server.port={port}",
@@ -379,7 +435,7 @@ def app_url():
             stderr=subprocess.STDOUT,
         )
         try:
-            _wait_for(f"http://127.0.0.1:{port}/_stcore/health", timeout=60)
+            _wait_for(f"http://127.0.0.1:{port}/_stcore/health", timeout=60, process=server)
             yield f"http://127.0.0.1:{port}"
         finally:
             server.terminate()
@@ -415,7 +471,7 @@ def page(app_url):
             stderr=subprocess.DEVNULL,
         )
         try:
-            _wait_for(f"http://127.0.0.1:{debug_port}/json/list", timeout=30)
+            _wait_for(f"http://127.0.0.1:{debug_port}/json/list", timeout=30, process=browser)
             targets = json.loads(_get(f"http://127.0.0.1:{debug_port}/json/list") or "[]")
             ws_url = next(
                 entry["webSocketDebuggerUrl"] for entry in targets if entry.get("type") == "page"
@@ -573,8 +629,45 @@ def test_streamlit_theme_menu_still_matches_what_theme_bridge_drives(page):
     page.press("Escape", "Escape", 27)
 
 
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("width", [1400, 390])
+def test_budget_controls_match_date_field_proportions(page, theme, width):
+    try:
+        page.select_page("Budgets")
+        page.wait_js("document.querySelectorAll('[data-testid=stNumberInput]').length === 3")
+        page.click(f"document.querySelector('[data-jizhang-theme-choice={theme}]')")
+        page.wait_js(
+            f"document.querySelector('[data-jizhang-theme-choice={theme}]')"
+            ".getAttribute('aria-checked') === 'true'"
+        )
+        page._command(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": width, "height": 1000, "deviceScaleFactor": 1, "mobile": False},
+        )
+        measurements = page.measure("""
+        JSON.stringify((() => {
+          const date = document.querySelector('[data-testid=stDateInputField]');
+          const reference = date.getBoundingClientRect().height /
+            parseFloat(getComputedStyle(date.querySelector('[role=spinbutton]')).fontSize);
+          const controls = [...document.querySelectorAll(
+            '[data-testid=stTextInputRootElement], [data-testid=stNumberInputContainer], '
+            + '[data-testid=stSelectbox] .react-aria-ComboBox > [role=group]')];
+          return {reference, ratios: controls.map(el => el.getBoundingClientRect().height /
+            parseFloat(getComputedStyle(el.querySelector('input')).fontSize))};
+        })())
+        """)
+        assert len(measurements["ratios"]) == 8, measurements
+        for ratio in measurements["ratios"]:
+            assert ratio == pytest.approx(measurements["reference"], abs=0.05)
+    finally:
+        page._command("Emulation.clearDeviceMetricsOverride")
+        page.evaluate(
+            "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+        )
+
+
 def test_add_transaction_controls_all_reach_the_height_theme_css_declares(page):
-    """The 42px rule must reach six different rendered widgets, not just the file."""
+    """Transaction controls share the native budget date field's compact height."""
     page.select_page("Transactions")
     page.click(
         "[...document.querySelectorAll('button')]"
@@ -585,7 +678,7 @@ def test_add_transaction_controls_all_reach_the_height_theme_css_declares(page):
     heights = page.measure(MEASURE_FORM)
     assert None not in heights.values(), heights
     assert len(set(heights.values())) == 1, heights
-    assert next(iter(heights.values())) == pytest.approx(42, abs=TOLERANCE), heights
+    assert next(iter(heights.values())) == pytest.approx(35, abs=TOLERANCE), heights
 
 
 def test_disabled_primary_button_stays_readable_in_dark_mode(page):
@@ -642,3 +735,83 @@ def test_edit_table_actions_cluster_and_size_to_content(page):
     assert 0 <= boxes["discard"]["x"] - boxes["review"]["right"] <= 40, boxes
     # The actions stay next to the data instead of drifting below a taller grid.
     assert boxes["review"]["y"] - (boxes["editor"]["y"] + boxes["editor"]["h"]) <= 40, boxes
+
+
+def test_table_date_editor_has_room_for_date_and_calendar(page):
+    page.select_page("Transactions")
+    page.wait_js("document.body.innerText.includes('Edit table')")
+    if not page.evaluate(REVIEW_CHANGES_READY):
+        page.click(EDIT_TABLE_SELECTOR)
+    page.wait_js(REVIEW_CHANGES_READY)
+    canvas = "document.querySelector('[data-testid=stDataFrame] canvas')"
+    page.wait_js(
+        f"!!{canvas} && {canvas}.getBoundingClientRect().width > 0"
+        f" && {canvas}.getBoundingClientRect().height > 0"
+    )
+    page.centre_of("document.querySelector('[data-testid=stDataFrame] .dvn-scroller')")
+    box = page.measure(f"JSON.stringify({canvas}.getBoundingClientRect().toJSON())")
+    # Delete is the first column; select Date in the first synthetic row.
+    for event_type in ("mousePressed", "mouseReleased"):
+        page._command(
+            "Input.dispatchMouseEvent",
+            {
+                "type": event_type,
+                "x": box["x"] + 140,
+                "y": box["y"] + 49,
+                "button": "left",
+                "clickCount": 1,
+                "buttons": 1 if event_type == "mousePressed" else 0,
+            },
+        )
+    page.wait_js(f"document.activeElement === {canvas}")
+    page.evaluate(
+        "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+    )
+    page.press("Enter", "Enter", 13)
+    page.wait_js("!!document.querySelector('[data-testid=date-picker-cell]')")
+    geometry = page.measure("""
+    JSON.stringify((() => {
+      const input = document.querySelector('[data-testid=date-picker-cell]');
+      return {input: input.getBoundingClientRect().toJSON(),
+        clip: input.closest('.gdg-clip-region').getBoundingClientRect().toJSON(),
+        type: input.type, min: input.min, max: input.max};
+    })())
+    """)
+    assert geometry["type"] == "date"
+    assert geometry["input"]["right"] <= geometry["clip"]["right"] + TOLERANCE, geometry
+    assert geometry["input"]["bottom"] <= geometry["clip"]["bottom"] + TOLERANCE, geometry
+    assert geometry["min"] == "1900-01-01"
+    assert geometry["max"]
+    page.press("Escape", "Escape", 27)
+
+
+def test_calendar_selection_updates_validated_date_and_saves(page):
+    page.select_page("Transactions")
+    page.click("document.querySelector('.st-key-open_add_transaction button')")
+    page.wait_js("!!document.querySelector('.date-calendar-native')")
+    text = "document.querySelector('.st-key-add_transaction_date input')"
+    # Open the real native picker with Enter, choose the previous day, and save.
+    # This exercises both keyboard interception and the browser's input events.
+    page.evaluate(
+        "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call("
+        f"{text}, '2026-07-23'); {text}.dispatchEvent(new Event('input', {{bubbles:true}}))"
+    )
+    page.evaluate("document.querySelector('.date-calendar-button').focus()")
+    page.press("Enter", "Enter", 13)
+    page.wait_js("document.activeElement === document.querySelector('.date-calendar-native')")
+    page.press("ArrowLeft", "ArrowLeft", 37)
+    page.wait_js(f"{text}.value === '2026-07-22'")
+    page.press("Enter", "Enter", 13)
+    for selector, value in (
+        (".st-key-add_transaction_description input", "Synthetic calendar purchase"),
+        (".st-key-add_transaction_amount input", "19.25"),
+    ):
+        page.evaluate(f"document.querySelector({json.dumps(selector)}).focus()")
+        page._command("Input.insertText", {"text": value})
+    page.click("document.querySelector('.st-key-add_transaction_submit button')")
+    page.wait_js("!document.querySelector('.date-calendar-native')")
+    page.wait_js("document.body.innerText.includes('Transaction saved.')")
+    # View reveals the persisted record, including when the table was selected.
+    page.click("document.querySelector('.st-key-view_saved_transaction button')")
+    page.wait_js("document.body.innerText.includes('Synthetic calendar purchase')")
+    page.wait_js("document.body.textContent.includes('Jul 22')")

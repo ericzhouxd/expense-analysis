@@ -15,6 +15,7 @@ def inject_theme() -> None:
     # Trusted, static code only. Never interpolate user content into these scripts.
     st.html(ASSETS / "theme_bridge.html", unsafe_allow_javascript=True)
     st.html(ASSETS / "choice_bridge.html", unsafe_allow_javascript=True)
+    st.html(ASSETS / "date_bridge.html", unsafe_allow_javascript=True)
 
 
 def currency(cents: int) -> str:
