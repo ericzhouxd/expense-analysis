@@ -97,14 +97,14 @@ def test_all_unmatched_expenses_count_income_and_transfers_do_not(plan):
     assert month["remaining"] == 14500
 
 
-def test_rollover_preserves_positive_and_negative_and_resets_at_quarter(plan):
+def test_rollover_preserves_positive_and_negative_across_quarters(plan):
     result = calculate_plan(plan, [transaction("food", "2026-10", 60000)])
     months = result["months"]
     assert months[0]["remaining"] == -32000
     assert months[1]["rollover"] == -32000
     assert months[1]["remaining"] == -4000
     assert months[2]["remaining"] == result["quarters"][0]["remaining"] == 24000
-    assert months[3]["rollover"] == 0
+    assert months[3]["rollover"] == months[2]["remaining"] == 24000
 
 
 def test_payment_before_plan_can_be_assigned_without_changing_transaction(plan):
@@ -273,6 +273,7 @@ def test_setup_and_all_pages_use_synthetic_database(plan, tmp_path, monkeypatch)
     )
     # A fresh session also verifies that the saved plan is loaded from SQLite.
     app = AppTest.from_file(APP_PATH).run()
+    app.sidebar.radio[0].set_value("Transactions").run()
     next(field for field in app.text_input if field.label == "Search").set_value(
         "no matching transaction"
     ).run()

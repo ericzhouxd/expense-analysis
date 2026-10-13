@@ -92,6 +92,7 @@ def preview_csv(
     content: bytes,
     config: AppConfig,
     existing_fingerprints: set[str] | None = None,
+    category_mapping: dict[str, str] | None = None,
 ) -> ImportPreview:
     text = decode_csv(content)
     reader = csv.DictReader(io.StringIO(text))
@@ -132,7 +133,8 @@ def preview_csv(
         original_category = _value(normalized, "category")
         notes = _value(normalized, "notes")
         merchant = _value(normalized, "merchant")
-        category = config.category_for(description, merchant, original_category)
+        mapped = (category_mapping or {}).get(original_category)
+        category = mapped or config.category_for(description, merchant, original_category)
         if original_category and category == "Uncategorized":
             note = f"Imported category: {original_category}"
             notes = f"{notes}\n{note}".strip()

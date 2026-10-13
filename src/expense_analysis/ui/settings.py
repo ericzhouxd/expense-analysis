@@ -5,6 +5,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from ..categories import save_category
+from ..choices import choice_options
 from ..config import DATABASE_PATH, AppConfig
 from ..database import Database
 from .widgets import _page_heading, _section_heading
@@ -16,6 +18,43 @@ def _render_settings(database: Database, config: AppConfig) -> None:
         "Settings and privacy",
         "Your data stays local, and your personal choices stay configurable.",
     )
+    with st.expander("Manage categories"):
+        st.caption(
+            "Keep broad categories; add exceptions when useful. Renaming also "
+            "updates transactions and budget mappings."
+        )
+        options = [v for v in choice_options(database, config, "category") if v != "Uncategorized"]
+        source = st.selectbox("Category to edit", ["Add a category", *options])
+        current = "" if source == "Add a category" else source
+        with st.form("manage_category"):
+            name = st.text_input("Category name", value=current, key=f"category_name_{source}")
+            group = st.selectbox(
+                "Spending group",
+                ["Personal", "Fixed"],
+                index=int(config.spending_class(current) == "Fixed"),
+                key=f"category_group_{source}",
+            )
+            keyword = st.text_input(
+                "Auto-categorize when description or merchant contains",
+                placeholder="Optional keyword or phrase",
+            )
+            if current:
+                count = len(database.list_transactions(categories=[current]))
+                st.caption(
+                    f"{count} transaction(s) use this category. Enter an existing name "
+                    f"to merge into it. Overlapping budget mappings will be rejected."
+                )
+            submitted = st.form_submit_button("Save category")
+        if submitted:
+            try:
+                save_category(database, config, name, group, source=current, keyword=keyword)
+            except ValueError as error:
+                st.error(str(error))
+            else:
+                st.session_state["category_saved"] = True
+                st.rerun()
+    if st.session_state.pop("category_saved", False):
+        st.success("Category saved locally.")
     st.html(
         """
         <div class="privacy-hero">

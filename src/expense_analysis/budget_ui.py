@@ -155,14 +155,14 @@ def _setup(database: Database, plan: SpendingPlan | None, config: AppConfig) -> 
         )
         a, b, c = st.columns(3)
         academic = a.number_input(
-            "9-month target ($)",
+            "9-month spending pool ($)",
             min_value=0.0,
             step=100.0,
             value=(plan.academic_target_cents if plan else sum(reference["components"].values()))
             / 100,
         )
         summer = b.number_input(
-            "Extra summer target ($)",
+            "Extra summer pool ($)",
             min_value=0.0,
             step=100.0,
             value=plan.summer_target_cents / 100 if plan else 0.0,
@@ -304,15 +304,21 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
     if plan is None:
         _setup(database, None, config)
         return
+    from .ui.spending import render_spending_summary
+
+    summary = render_spending_summary(database, key="budgets", details=True)
+    st.subheader("Monthly and quarterly allocation details")
     rows = database.list_transactions()  # Deliberately independent of sidebar filters.
-    result = calculate_plan(plan, rows)
+    result = calculate_plan(
+        plan, [r for r in rows if str(r["transaction_date"])[:10] <= summary["as_of"].isoformat()]
+    )
     st.caption(
         f"{plan.name} · {plan.start:%b %Y}–{month_after(plan.start, plan.months - 1):%b %Y} · "
         "All recorded expenses included; activity filters do not apply."
     )
     first, second = st.columns([1, 2])
     view = first.radio("View", ["Monthly", "Quarterly"], horizontal=True)
-    today = date.today()
+    today = summary["as_of"]
     current = min(
         max((today.year - plan.start.year) * 12 + today.month - plan.start.month, 0),
         plan.months - 1,
@@ -353,8 +359,8 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
         c.metric("Weekly guide", money(round(max(remaining, 0) * min(days, 7) / days)))
     if view == "Monthly":
         st.caption(
-            f"Carry from earlier months in this quarter: {money(period['rollover'])}. "
-            "Both unused allowance and overspending carry forward; quarters reset."
+            f"Carry from earlier months in this school year: {money(period['rollover'])}. "
+            "Unused allowance and overspending carry through every quarter of this plan."
         )
     if period["allowance"] < 0:
         st.warning(
@@ -368,7 +374,7 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
         )
     left, right = st.columns([3, 2])
     with left:
-        st.subheader("Where the target goes")
+        st.subheader("How the period allowance is calculated")
         st.dataframe(
             pd.DataFrame(
                 [
@@ -513,8 +519,8 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
         st.write(
             "Target − committed costs − buffer = everyday allowance. Bill cycles are spread over "
             "their coverage months, then everyday allowance is smoothed within each quarter. "
-            "Monthly remaining includes prior months in the same quarter; quarterly remaining "
-            "uses that quarter’s total spending. Income and transfers do not change the target. "
+            "Monthly remaining includes all prior months in the plan; quarterly remaining "
+            "includes prior-quarter carryover. Income and transfers do not change the target. "
             "All matching uses exact categories, not the older Fixed/Personal grouping. "
             "Payment dates remain unchanged in other pages."
         )
