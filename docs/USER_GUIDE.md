@@ -235,3 +235,33 @@ cp config.example.toml config.toml
 
 Edit it to change categories, entry defaults, account choices, category rules, or
 academic-period dates. The root `config.toml` is ignored by Git.
+
+### Faster transaction entry
+
+On Transactions, press **N** while outside an input to open Add transaction.
+**Enter** moves to the next field and **Shift+Enter** moves back; **Tab** and
+**Shift+Tab** also work. In Category, use arrow keys and Enter to choose an
+option, or type a new category. Escape closes the choices before closing the
+dialog. Notes supports normal multiline entry. **Command+Enter** (Mac) or
+**Ctrl+Enter** saves the entry. Suggestions update immediately and are checked
+again on save; choosing a category manually keeps your choice until you select
+**Use automatic category**. Apple Pay is the default payment method.
+
+In Settings, expand **Remove unused categories, accounts and payment methods**
+to select unwanted choices and remove them. Removal persists across restarts.
+Choices referenced by transactions, budget bills, category rules, or entry
+defaults cannot be removed. Rename or merge used categories through Manage
+categories instead.
+
+
+The Add date field accepts `YYYYMMDD` and inserts the dashes for you. Invalid
+calendar dates and out-of-range dates are flagged as you type. The table keeps
+`YYYY-MM-DD` while editing, so month and day do not swap positions.
+
+Edit table automatically shows fewer columns on narrow screens. Use **Table
+columns** to choose any other fields; leave the selection empty to return to the
+responsive view. Hidden fields keep their values.
+
+Budgets opens with your month or quarter's everyday allowance and bill reserves.
+Use **Edit plan & committed costs** at the top to update your plan. Detailed
+calculations, school-year comparisons, and payment timing are expandable below.

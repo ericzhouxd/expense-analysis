@@ -21,6 +21,7 @@ the real ledger.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -76,7 +77,7 @@ FORM_SELECTORS = {
     "description": ".category-entry input[name=description]",
     "merchant": ".category-entry input[name=merchant]",
     "amount": ".st-key-add_transaction_amount [data-testid='stNumberInputContainer']",
-    "category": ".category-entry input[name=category]",
+    "category": ".category-entry .category-input-group",
     "submit": ".st-key-add_transaction_submit [data-testid='stBaseButton-primaryFormSubmit']",
 }
 
@@ -680,6 +681,20 @@ def test_add_transaction_controls_all_reach_the_height_theme_css_declares(page):
     assert None not in heights.values(), heights
     assert len(set(heights.values())) == 1, heights
     assert next(iter(heights.values())) == pytest.approx(35, abs=TOLERANCE), heights
+    styles = page.measure("""JSON.stringify((() => {
+      const native = document.querySelector(
+        '.st-key-add_transaction_account [data-testid=stWidgetLabel] p');
+      const custom = document.querySelector('.category-choice > span');
+      return [native,custom].map(el => {
+        const s = getComputedStyle(el); return [s.fontSize,s.textTransform,s.letterSpacing];
+      });
+    })())""")
+    assert styles[0] == styles[1], styles
+    if destination := os.environ.get("THEME_AUDIT_SCREENSHOTS"):
+        folder = Path(destination)
+        folder.mkdir(parents=True, exist_ok=True)
+        screenshot = page._command("Page.captureScreenshot", {"format": "png"})
+        (folder / "add-transaction.png").write_bytes(base64.b64decode(screenshot["result"]["data"]))
 
 
 def test_disabled_primary_button_stays_readable_in_dark_mode(page):
@@ -729,8 +744,8 @@ def test_edit_table_actions_cluster_and_size_to_content(page):
 
     boxes = page.measure(MEASURE_ACTION_ROW)
     assert None not in boxes.values(), boxes
-    # Two seeded rows: 48px chrome + 2 * 35px rows, floored at 200.
-    assert boxes["editor"]["h"] == pytest.approx(200, abs=TOLERANCE), boxes
+    # Two seeded rows: 48px chrome + 2 * 35px rows, floored at 120.
+    assert boxes["editor"]["h"] == pytest.approx(120, abs=TOLERANCE), boxes
     # Discard shares the header button's right edge; Review sits just beside it.
     assert boxes["discard"]["right"] == pytest.approx(boxes["add"]["right"], abs=4), boxes
     assert 0 <= boxes["discard"]["x"] - boxes["review"]["right"] <= 40, boxes
@@ -738,7 +753,7 @@ def test_edit_table_actions_cluster_and_size_to_content(page):
     assert boxes["review"]["y"] - (boxes["editor"]["y"] + boxes["editor"]["h"]) <= 40, boxes
 
 
-def test_table_date_editor_has_room_for_date_and_calendar(page):
+def test_table_date_editor_keeps_iso_order_without_extra_text_outlines(page):
     page.select_page("Transactions")
     page.wait_js("document.body.innerText.includes('Edit table')")
     if not page.evaluate(REVIEW_CHANGES_READY):
@@ -757,7 +772,7 @@ def test_table_date_editor_has_room_for_date_and_calendar(page):
             "Input.dispatchMouseEvent",
             {
                 "type": event_type,
-                "x": box["x"] + 140,
+                "x": box["x"] + 70,
                 "y": box["y"] + 49,
                 "button": "left",
                 "clickCount": 1,
@@ -769,29 +784,25 @@ def test_table_date_editor_has_room_for_date_and_calendar(page):
         "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
     )
     page.press("Enter", "Enter", 13)
-    page.wait_js("!!document.querySelector('[data-testid=date-picker-cell]')")
+    page.wait_js("!!document.querySelector('.gdg-clip-region textarea, .gdg-clip-region input')")
     geometry = page.measure("""
     JSON.stringify((() => {
-      const input = document.querySelector('[data-testid=date-picker-cell]');
-      return {input: input.getBoundingClientRect().toJSON(),
-        clip: input.closest('.gdg-clip-region').getBoundingClientRect().toJSON(),
-        type: input.type, min: input.min, max: input.max};
+      const input = document.querySelector('.gdg-clip-region textarea, .gdg-clip-region input');
+      return {value:input.value, outline:getComputedStyle(input).outlineStyle};
     })())
     """)
-    assert geometry["type"] == "date"
-    assert geometry["input"]["right"] <= geometry["clip"]["right"] + TOLERANCE, geometry
-    assert geometry["input"]["bottom"] <= geometry["clip"]["bottom"] + TOLERANCE, geometry
-    assert geometry["min"] == "1900-01-01"
-    assert geometry["max"]
+    assert geometry["value"] == "2026-07-30", geometry
+    assert geometry["outline"] == "none", geometry
     page.press("Escape", "Escape", 27)
 
 
 def test_calendar_selection_updates_validated_date_and_saves(page):
+    page.press("Escape", "Escape", 27)
     page.select_page("Transactions")
     page.click("document.querySelector('.st-key-open_add_transaction button')")
-    page.wait_js("!!document.querySelector('.date-calendar-native')")
+    page.wait_js("!!document.querySelector('.date-calendar-button')")
     text = "document.querySelector('.st-key-add_transaction_date input')"
-    # Open the real native picker with Enter, choose the previous day, and save.
+    # Open the themed calendar with Enter, choose the previous day, and save.
     # This exercises both keyboard interception and the browser's input events.
     page.evaluate(
         "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call("
@@ -799,10 +810,10 @@ def test_calendar_selection_updates_validated_date_and_saves(page):
     )
     page.evaluate("document.querySelector('.date-calendar-button').focus()")
     page.press("Enter", "Enter", 13)
-    page.wait_js("document.activeElement === document.querySelector('.date-calendar-native')")
+    page.wait_js("document.activeElement.getAttribute('aria-label') === '2026-07-23'")
     page.press("ArrowLeft", "ArrowLeft", 37)
-    page.wait_js(f"{text}.value === '2026-07-22'")
     page.press("Enter", "Enter", 13)
+    page.wait_js(f"{text}.value === '2026-07-22'")
     for selector, value in (
         (".category-entry input[name=description]", "Synthetic calendar purchase"),
         (".st-key-add_transaction_amount input", "19.25"),
@@ -810,7 +821,7 @@ def test_calendar_selection_updates_validated_date_and_saves(page):
         page.evaluate(f"document.querySelector({json.dumps(selector)}).focus()")
         page._command("Input.insertText", {"text": value})
     page.click("document.querySelector('.st-key-add_transaction_submit button')")
-    page.wait_js("!document.querySelector('.date-calendar-native')")
+    page.wait_js("!document.querySelector('.date-calendar-button')")
     page.wait_js("document.body.innerText.includes('Transaction saved.')")
     # View reveals the persisted record, including when the table was selected.
     page.click("document.querySelector('.st-key-view_saved_transaction button')")
@@ -829,6 +840,10 @@ def test_live_category_suggestions_manual_override_and_save(page):
         page._command("Input.insertText", {"text": value})
 
     type_field("description", "groceries")
+    assert page.evaluate("document.activeElement.name === 'description'")
+    assert page.evaluate(
+        "document.querySelector('.category-entry input[name=category]').value === 'Food'"
+    )
     page.wait_js("document.querySelector('.category-entry input[name=category]').value === 'Food'")
     type_field("description", "coffee")
     page.wait_js(
@@ -918,3 +933,118 @@ def test_sections_paint_as_one_panel_with_a_stacked_heading(page):
     assert (
         len({section["titleSize"] for sections in measured.values() for section in sections}) == 1
     )
+
+
+def test_entry_shortcuts_dropdown_and_fast_save(page):
+    page.press("Escape", "Escape", 27)
+    page.select_page("Transactions")
+    page.evaluate("document.activeElement.blur()")
+
+    def key(name, code, number, modifiers=0):
+        for event_type in ("keyDown", "keyUp"):
+            page._command(
+                "Input.dispatchKeyEvent",
+                {
+                    "type": event_type,
+                    "key": name,
+                    "code": code,
+                    "windowsVirtualKeyCode": number,
+                    "modifiers": modifiers,
+                },
+            )
+
+    page.wait_js("typeof window.jizhangUiKeyHandler === 'function'")
+    key("n", "KeyN", 78)
+    page.wait_js("!!document.querySelector('.category-entry input[name=description]')")
+    page.evaluate("document.querySelector('.category-entry input[name=description]').focus()")
+    page._command("Input.insertText", {"text": "Synthetic coffee shortcut"})
+    page.press("Enter", "Enter", 13)
+    page.wait_js("document.activeElement.name === 'merchant'")
+    key("Enter", "Enter", 13, 8)
+    page.wait_js("document.activeElement.name === 'description'")
+    page.press("Enter", "Enter", 13)
+    page.press("Enter", "Enter", 13)
+    page.wait_js("document.activeElement.name === 'category'")
+    page.wait_js("document.activeElement.getAttribute('aria-expanded') === 'true'")
+    page.press("Escape", "Escape", 27)
+    page.wait_js("document.activeElement.getAttribute('aria-expanded') === 'false'")
+    assert page.evaluate("!!document.querySelector('.st-key-add_transaction_submit button')")
+    page.press("Enter", "Enter", 13)
+    page.wait_js("!!document.activeElement.closest('.st-key-add_transaction_amount')")
+    page._command("Input.insertText", {"text": "3.75"})
+    assert page.evaluate(
+        "document.querySelector('.st-key-add_transaction_payment_method input')"
+        ".value === 'Apple Pay'"
+    )
+    key("Enter", "Enter", 13, 4 if sys.platform == "darwin" else 2)
+    page.wait_js("!document.querySelector('.st-key-add_transaction_submit button')")
+    page.wait_js("!!document.querySelector('.st-key-view_saved_transaction button')")
+    page.click("document.querySelector('.st-key-view_saved_transaction button')")
+    page.wait_js(
+        "document.querySelector('.transaction-row.is-focused')?.textContent"
+        ".includes('Synthetic coffee shortcut')"
+    )
+    assert page.evaluate(
+        "document.querySelector('.transaction-row.is-focused').textContent.includes('Dining Out')"
+    )
+
+
+def test_editor_adapts_to_phone_and_restores_desktop_columns(page):
+    page.press("Escape", "Escape", 27)
+    page.select_page("Transactions")
+    page.click(EDIT_TABLE_SELECTOR)
+    page.wait_js(REVIEW_CHANGES_READY)
+    try:
+        page._command(
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": 390,
+                "height": 844,
+                "deviceScaleFactor": 1,
+                "mobile": False,
+            },
+        )
+        page.wait_js("document.body.innerText.includes('Compact view')")
+        sizes = page.measure("""JSON.stringify((() => {
+            const box = document.querySelector('[data-testid=stDataFrame]').getBoundingClientRect();
+            return {left:box.left, right:box.right, width:window.innerWidth};
+        })())""")
+        assert sizes["left"] >= 0 and sizes["right"] <= sizes["width"], sizes
+    finally:
+        page._command("Emulation.clearDeviceMetricsOverride")
+    page.wait_js("!document.body.innerText.includes('Compact view')")
+
+
+def test_date_feedback_and_separator_free_typing(page):
+    page.press("Escape", "Escape", 27)
+    page.select_page("Transactions")
+    page.click("document.querySelector('.st-key-open_add_transaction button')")
+    page.wait_js("!!document.querySelector('.date-calendar-button svg')")
+    field = "document.querySelector('.st-key-add_transaction_date input')"
+    page.evaluate(f"{field}.focus(); {field}.select()")
+    page._command("Input.insertText", {"text": "20260230"})
+    assert page.evaluate(f"{field}.value") == "2026-02-30"
+    assert page.evaluate(f"{field}.getAttribute('aria-invalid')") == "true"
+    assert "does not exist" in page.evaluate(
+        "document.querySelector('.date-validation').textContent"
+    )
+    page.evaluate(f"{field}.select()")
+    page._command("Input.insertText", {"text": "20261021"})
+    assert page.evaluate(f"{field}.value") == "2026-10-21"
+    assert page.evaluate(f"{field}.getAttribute('aria-invalid')") == "false"
+    # Delete across a separator, then replace the date without typing punctuation.
+    page.evaluate(f"{field}.setSelectionRange(5,5)")
+    for kind in ("keyDown", "keyUp"):
+        page._command(
+            "Input.dispatchKeyEvent",
+            {
+                "type": kind,
+                "key": "Backspace",
+                "code": "Backspace",
+                "windowsVirtualKeyCode": 8,
+            },
+        )
+    assert page.evaluate(f"{field}.value") == "2021-02-1"
+    page._command("Input.insertText", {"text": "6"})
+    assert page.evaluate(f"{field}.value") == "2026-10-21"
+    page.press("Escape", "Escape", 27)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from html import escape
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -9,6 +11,7 @@ import streamlit as st
 from ..analytics import monthly_spending
 from ..database import Database
 from .spending import render_spending_summary
+from .theme import PRIMARY
 from .widgets import _currency, _page_heading, _plotly_chart, _section, _transaction_list
 
 
@@ -39,42 +42,75 @@ def _render_dashboard(
                 st.info("No expenses recorded for this month yet.")
             else:
                 chart = px.bar(
-                    categories.sort_values("spending"), x="spending", y="category", orientation="h"
+                    categories.sort_values("spending"),
+                    x="spending",
+                    y="category",
+                    orientation="h",
+                    color_discrete_sequence=[PRIMARY],
                 )
                 chart.update_xaxes(tickprefix="$")
-                _plotly_chart(chart, key="category_breakdown", height=320)
+                _plotly_chart(chart, key="category_breakdown", height=320, scroll=False)
     with right:
         with _section("worth-checking", "Worth checking"):
+            checks = []
             if summary["active"]:
-                st.write(
-                    f"Unpaid planned bills: {_currency(summary['unpaid'] / 100)}. "
-                    f"Already protected in your available amount."
+                checks.append(
+                    (
+                        "Reserved for bills",
+                        _currency(summary["unpaid"] / 100),
+                        "Already protected in your available amount.",
+                        "calm",
+                    )
                 )
                 if summary["available"] < 0:
-                    st.warning(
-                        "Spending, commitments and buffer exceed the current pool. Review "
-                        "the pool or planned costs in Budgets."
+                    checks.append(
+                        (
+                            "Pool needs attention",
+                            "Over plan",
+                            "Review your pool or committed costs in Budgets.",
+                            "attention",
+                        )
                     )
                 elif summary["month_available"] < 0:
-                    st.info(
-                        "You are ahead of the monthly spending pace. Your remaining "
-                        "school-year pool is shown above."
+                    checks.append(
+                        (
+                            "Monthly pace",
+                            "Ahead of plan",
+                            "Check your remaining allowance before the next purchase.",
+                            "neutral",
+                        )
                     )
             unknown = selected[selected["category"].eq("Uncategorized")]
             if not unknown.empty:
-                st.write(
-                    f"{len(unknown)} uncategorized transaction(s). Check whether any "
-                    f"should match a planned bill."
+                checks.append(
+                    (
+                        "Needs a category",
+                        str(len(unknown)),
+                        "Review these entries in Transactions.",
+                        "neutral",
+                    )
                 )
             prior = summary["previous_year_month"]
             if prior is not None:
-                st.write(
-                    f"Same point last year: {_currency(prior / 100)}. Difference: "
-                    f"{_currency((summary['month_spent'] - prior) / 100)}."
+                checks.append(
+                    (
+                        "Same point last year",
+                        _currency(prior / 100),
+                        f"Difference: {_currency((summary['month_spent'] - prior) / 100)}.",
+                        "calm",
+                    )
                 )
-            st.caption(
-                "Budgets explains the allowance and bill reserves. Advanced "
-                "insights compares spending pace and previous school years."
+            if not checks:
+                checks.append(("All caught up", "", "No uncategorized entries this month.", "calm"))
+            st.html(
+                '<div class="overview-checks">'
+                + "".join(
+                    f'<div class="insight-row"><span class="insight-dot {tone}"></span>'
+                    f"<div><strong>{escape(title)}</strong><span>{escape(detail)}</span></div>"
+                    f'<b class="check-value">{escape(value)}</b></div>'
+                    for title, value, detail, tone in checks
+                )
+                + "</div>"
             )
     with _section(
         "spending-by-month",
@@ -90,6 +126,7 @@ def _render_dashboard(
                 x="label",
                 y="spending",
                 labels={"label": "Month", "spending": "Net spent"},
+                color_discrete_sequence=[PRIMARY],
             )
             chart.update_yaxes(tickprefix="$")
             _plotly_chart(chart, key="spending_trend", height=280)

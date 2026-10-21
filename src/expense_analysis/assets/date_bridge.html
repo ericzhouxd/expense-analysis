@@ -1,77 +1,162 @@
 <script>
-// A native calendar companion for the strict text field. Picking a day updates
-// the normal Streamlit input; typed text is never normalized or replaced on blur.
+// A themed, local calendar companion for the strictly validated ISO text field.
 (() => {
   window.jizhangDateCleanup?.();
   const selector = '.st-key-add_transaction_date [data-testid="stTextInputRootElement"]';
-  const localIso = date => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0')].join('-');
+  const iso = date => [date.getFullYear(), String(date.getMonth()+1).padStart(2,'0'), String(date.getDate()).padStart(2,'0')].join('-');
   const attach = () => {
     const root = document.querySelector(selector);
     if (!root || root.querySelector('.date-calendar-button')) return;
     const text = root.querySelector('input');
     if (!text) return;
-    const picker = document.createElement('input');
-    picker.type = 'date';
-    picker.className = 'date-calendar-native';
-    picker.tabIndex = -1;
-    picker.setAttribute('aria-label', 'Choose transaction date');
-    // Match the model's bounds; the server remains the authoritative validator.
-    picker.min = '1900-01-01';
-    const latest = new Date();
-    latest.setDate(latest.getDate() + 366);
-    picker.max = localIso(latest);
     const control = document.createElement('span');
     control.className = 'date-calendar-control';
     const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'date-calendar-button';
+    button.type = 'button'; button.className = 'date-calendar-button';
     button.setAttribute('aria-label', 'Open date calendar');
-    button.title = 'Choose a date from the calendar';
-    button.textContent = '▦';
-    control.append(button, picker);
-    const seed = () => {
-      // Seed only from a valid ISO date. Do not coerce an invalid typed date.
-      picker.value = /^\d{4}-\d{2}-\d{2}$/.test(text.value) ? text.value : '';
-      if (!picker.value || !picker.checkValidity()) picker.value = localIso(new Date());
+    button.setAttribute('aria-expanded', 'false');
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    for (const [name,value] of Object.entries({width:'18',height:'18',viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.6','aria-hidden':'true'})) svg.setAttribute(name,value);
+    const outline = document.createElementNS('http://www.w3.org/2000/svg','path');
+    outline.setAttribute('d','M3 5h18v16H3z M7 2v6 M17 2v6 M3 11h18 M7 15h3 M14 15h3');
+    svg.append(outline); button.append(svg);
+    const popup = document.createElement('div');
+    popup.className = 'date-calendar-popup'; popup.hidden = true;
+    popup.setAttribute('role', 'dialog'); popup.setAttribute('aria-label', 'Choose transaction date');
+    let month;
+    const latest = new Date(); latest.setDate(latest.getDate()+366);
+    const close = () => { popup.hidden = true; button.setAttribute('aria-expanded','false'); };
+    const render = () => {
+      popup.replaceChildren();
+      const header = document.createElement('div'); header.className = 'calendar-heading';
+      const title = document.createElement('strong');
+      title.textContent = month.toLocaleDateString(undefined, {month:'long', year:'numeric'});
+      for (const [label, delta, symbol] of [['Previous month',-1,'<'], ['Next month',1,'>']]) {
+        const nav = document.createElement('button'); nav.type = 'button'; nav.textContent = symbol;
+        nav.setAttribute('aria-label',label);
+        nav.onclick = () => { month.setMonth(month.getMonth()+delta); render(); popup.querySelector(`[aria-label="${label}"]`).focus(); };
+        if (delta < 0) header.append(nav, title); else header.append(nav);
+      }
+      popup.append(header);
+      const grid = document.createElement('div'); grid.className = 'calendar-days';
+      for (const label of ['Su','Mo','Tu','We','Th','Fr','Sa']) {
+        const weekday = document.createElement('span'); weekday.textContent = label; grid.append(weekday);
+      }
+      for (let i = 0; i < month.getDay(); i++) grid.append(document.createElement('span'));
+      const total = new Date(month.getFullYear(), month.getMonth()+1, 0).getDate();
+      for (let day = 1; day <= total; day++) {
+        const value = iso(new Date(month.getFullYear(),month.getMonth(),day));
+        const cell = document.createElement('button'); cell.type = 'button'; cell.textContent = String(day);
+        cell.setAttribute('aria-label',value); cell.setAttribute('aria-pressed',String(value === text.value));
+        cell.disabled = value < '1900-01-01' || value > iso(latest);
+        cell.onclick = () => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(text,value);
+          text.dispatchEvent(new Event('input',{bubbles:true}));
+          text.dispatchEvent(new Event('change',{bubbles:true})); close(); text.focus();
+        };
+        grid.append(cell);
+      }
+      popup.append(grid);
     };
-    button.addEventListener('click', event => {
-      if (event.target === picker) return;
-      seed();
-      // Native popup keyboard input must belong to the date field, not the button.
-      picker.focus({preventScroll: true});
-      if (picker.showPicker) picker.showPicker();
-      else picker.click();
-    });
-    // The transparent native input is also a direct pointer target, including
-    // browsers that don't implement showPicker(). Keep its current month in sync.
-    picker.addEventListener('pointerdown', seed);
-    const selectDate = () => {
-      if (!picker.value || !picker.checkValidity()) return;
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(text, picker.value);
-      text.dispatchEvent(new Event('input', {bubbles: true}));
-      text.dispatchEvent(new Event('change', {bubbles: true}));
-      text.focus();
+    button.onclick = () => {
+      if (!popup.hidden) { close(); return; }
+      const parsed = /^\d{4}-\d{2}-\d{2}$/.test(text.value) ? new Date(text.value+'T12:00:00') : new Date();
+      month = Number.isNaN(parsed.getTime()) ? new Date() : parsed; month.setDate(1);
+      render(); popup.hidden = false; button.setAttribute('aria-expanded','true');
+      (popup.querySelector('[aria-pressed=true]') || popup.querySelector('.calendar-days button:not(:disabled)'))?.focus();
     };
-    picker.addEventListener('input', selectDate);
-    picker.addEventListener('change', selectDate);
-    root.append(control);
+    control.onfocusout = event => { if (!control.contains(event.relatedTarget)) close(); };
+    control.append(button,popup); root.append(control);
+    const feedback = document.createElement('div');
+    feedback.id = 'transaction-date-validation'; feedback.className = 'date-validation';
+    feedback.setAttribute('role','status'); feedback.setAttribute('aria-live','polite');
+    root.after(feedback);
+    text.setAttribute('aria-describedby',feedback.id);
+    text.setAttribute('inputmode','numeric');
+    text.setAttribute('placeholder','YYYY-MM-DD or YYYYMMDD');
+  };
+  const dateInput = () => document.querySelector(selector + ' input');
+  const validate = () => {
+    const input = dateInput();
+    if (!input) return true;
+    const value = input.value;
+    const parsed = new Date(value + 'T12:00:00');
+    const latest = new Date(); latest.setDate(latest.getDate()+366);
+    let error = '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) error = 'Enter 8 digits: YYYYMMDD. Separators are added for you.';
+    else if (Number.isNaN(parsed.getTime()) || iso(parsed) !== value) error = 'That date does not exist. Check the month and day.';
+    else if (value < '1900-01-01' || value > iso(latest)) error = `Choose a date from 1900-01-01 to ${iso(latest)}.`;
+    const feedback = document.getElementById('transaction-date-validation');
+    if (feedback) feedback.textContent = error;
+    input.setAttribute('aria-invalid',String(Boolean(error)));
+    input.setCustomValidity(error);
+    return !error;
+  };
+  const onDateInput = event => {
+    const input = dateInput();
+    if (event.target !== input || event.isComposing) return;
+    const raw = input.value;
+    let formatted = raw;
+    let digitsBefore = raw.slice(0,input.selectionStart).replace(/\D/g,'').length;
+    const usDate = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    if (usDate) formatted = `${usDate[3]}-${usDate[1].padStart(2,'0')}-${usDate[2].padStart(2,'0')}`;
+    else if (/^[\d/-]*$/.test(raw)) {
+      const digits = raw.replace(/\D/g,'');
+      if (digits.length <= 8) formatted = digits.slice(0,4) + (digits.length > 4 ? '-' + digits.slice(4,6) : '') + (digits.length > 6 ? '-' + digits.slice(6) : '');
+    }
+    if (formatted !== raw) {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,formatted);
+      let caret = 0, seen = 0;
+      while (caret < formatted.length && seen < digitsBefore) {if (/\d/.test(formatted[caret])) seen++; caret++;}
+      input.setSelectionRange(caret,caret);
+    }
+    validate();
+  };
+  const onBeforeInput = event => {
+    const input = dateInput();
+    if (event.target !== input || input.selectionStart !== input.selectionEnd) return;
+    const position = input.selectionStart;
+    if (event.inputType === 'deleteContentBackward' && /[-/]/.test(input.value[position-1] || '')) input.setSelectionRange(Math.max(0,position-2),position);
+    if (event.inputType === 'deleteContentForward' && /[-/]/.test(input.value[position] || '')) input.setSelectionRange(position,position+2);
+  };
+  const onSubmitClick = event => {
+    if (event.target.closest?.('.st-key-add_transaction_submit') && !validate()) {
+      event.preventDefault(); event.stopImmediatePropagation(); dateInput()?.focus();
+    }
+  };
+  const onKey = event => {
+    if (event.target === dateInput() && event.key === 'Enter' && !validate()) {
+      event.preventDefault(); event.stopImmediatePropagation(); return;
+    }
+    const control = event.target.closest?.('.date-calendar-control');
+    if (!control || event.isComposing) return;
+    if (event.key === 'Escape') {
+      event.preventDefault(); event.stopImmediatePropagation();
+      control.querySelector('.date-calendar-popup').hidden = true;
+      const button = control.querySelector('.date-calendar-button');
+      button.setAttribute('aria-expanded','false'); button.focus();
+    } else if (['Enter',' '].includes(event.key) && event.target.matches('button')) {
+      event.preventDefault(); event.stopImmediatePropagation(); event.target.click();
+    } else if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key) && event.target.closest('.calendar-days')) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      const cells = [...control.querySelectorAll('.calendar-days button')];
+      const step = {ArrowLeft:-1,ArrowRight:1,ArrowUp:-7,ArrowDown:7}[event.key];
+      cells[cells.indexOf(event.target)+step]?.focus();
+    }
   };
   const observer = new MutationObserver(attach);
-  observer.observe(document.body, {childList: true, subtree: true});
-  // Streamlit's text-field Enter handler otherwise consumes keyboard activation
-  // of a button embedded beside the input. Handle it before that form handler.
-  const onKey = event => {
-    if (!event.target.matches?.('.date-calendar-button') || !['Enter', ' '].includes(event.key)) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    event.target.click();
-  };
-  window.addEventListener('keydown', onKey, true);
+  observer.observe(document.body,{childList:true,subtree:true});
+  window.addEventListener('keydown',onKey,true);
+  window.addEventListener('input',onDateInput,true);
+  window.addEventListener('beforeinput',onBeforeInput,true);
+  window.addEventListener('click',onSubmitClick,true);
   attach();
   window.jizhangDateCleanup = () => {
-    observer.disconnect();
-    window.removeEventListener('keydown', onKey, true);
+    observer.disconnect(); window.removeEventListener('keydown',onKey,true);
+    window.removeEventListener('input',onDateInput,true);
+    window.removeEventListener('beforeinput',onBeforeInput,true);
+    window.removeEventListener('click',onSubmitClick,true);
+    document.getElementById('transaction-date-validation')?.remove();
     document.querySelectorAll('.date-calendar-control').forEach(control => control.remove());
   };
 })();

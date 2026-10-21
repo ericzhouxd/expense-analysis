@@ -115,7 +115,9 @@ def test_theme_bridge_dismisses_date_calendar_before_advancing_fields():
     assert "addDateFieldSelector" in bridge
     assert "closeAddDateCalendar" in bridge
     close_calendar = bridge.index("closeAddDateCalendar(fields[index]);")
-    advance = bridge.index("fieldControl(fields[index + 1])?.focus();")
+    advance = bridge.index(
+        "fieldControl(fields[Math.max(0, index + (event.shiftKey ? -1 : 1))])?.focus();"
+    )
     assert close_calendar < advance
 
 

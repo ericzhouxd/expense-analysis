@@ -75,12 +75,13 @@ table fields use creatable multiselect columns; transaction validation enforces 
 value per field, while budget bills may map multiple categories. Calculation enums
 (transaction type, billing cycle, and reference presets) keep fixed choices.
 
-`assets/date_bridge.html` adds a native calendar companion to the Add dialog's
-strict text date field. Calendar selections dispatch the normal input events;
-typed dates remain unchanged until server validation. The bridge handles native
+`assets/date_bridge.html` adds a themed, keyboard-accessible calendar companion to the Add dialog's
+text date field. Calendar selections dispatch normal input events. Typed dates
+receive immediate local validation and automatic year-month-day separators; the
+server still validates every save. The bridge handles
 input/change events and keyboard activation, disconnects on reruns, and uses no
 network or storage. Date bounds must stay aligned with `models.py`. The table's
-Date column reserves enough width for the browser's native date editor and icon.
+Date column uses ISO text so editing never switches to a browser locale's date order.
 
 The three families are Departure Mono (UI), Anton (condensed amounts), and a
 two-character Noto Sans TC subset (記帳 wordmark). Fonts and their OFL licenses live

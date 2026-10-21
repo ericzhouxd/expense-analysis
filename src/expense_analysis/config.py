@@ -43,7 +43,7 @@ DEFAULT_FIXED_CATEGORIES = (
     "Travel",
 )
 DEFAULT_ACCOUNTS = ("Checking", "Credit Card", "Cash")
-DEFAULT_METHODS = ("Card", "Mobile Wallet", "Bank Transfer", "Online", "Cash")
+DEFAULT_METHODS = ("Apple Pay", "Card", "Bank Transfer", "Online", "Cash")
 TRANSACTION_TYPES = ("expense", "refund", "income", "transfer")
 
 
@@ -86,7 +86,7 @@ class AppConfig:
     accounts: tuple[str, ...] = DEFAULT_ACCOUNTS
     payment_methods: tuple[str, ...] = DEFAULT_METHODS
     default_account: str = "Checking"
-    default_payment_method: str = "Card"
+    default_payment_method: str = "Apple Pay"
     category_rules: tuple[tuple[str, str], ...] = ()
     category_aliases: tuple[tuple[str, str], ...] = ()
     academic_calendar: AcademicCalendar = field(default_factory=AcademicCalendar)
@@ -150,13 +150,17 @@ def load_config(path: Path = LOCAL_CONFIG_PATH) -> AppConfig:
         summer_months=_tuple_setting(calendar, "summer_months", (7, 8)),
         explicit_periods=explicit_periods,
     )
+    payment_default = str(defaults.get("payment_method", "Apple Pay"))
+    # Migrate the original generic default without rewriting private configuration.
+    if payment_default == "Card":
+        payment_default = "Apple Pay"
     return AppConfig(
         personal_categories=_tuple_setting(categories, "personal", DEFAULT_PERSONAL_CATEGORIES),
         fixed_categories=_tuple_setting(categories, "fixed", DEFAULT_FIXED_CATEGORIES),
         accounts=_tuple_setting(choices, "accounts", DEFAULT_ACCOUNTS),
         payment_methods=_tuple_setting(choices, "payment_methods", DEFAULT_METHODS),
         default_account=str(defaults.get("account", "Checking")),
-        default_payment_method=str(defaults.get("payment_method", "Card")),
+        default_payment_method=payment_default,
         category_rules=tuple(
             (str(keyword), str(category))
             for keyword, category in raw.get("category_rules", {}).items()

@@ -113,3 +113,12 @@ def test_merchant_history_auto_detects_categories_during_import(database):
         merchant_suggestions=suggestions,
     )
     assert preview.valid_drafts[0].category == "Food"
+
+
+def test_save_time_suggestion_matches_live_priority(database):
+    from expense_analysis.categories import suggested_category
+
+    config = AppConfig(category_rules=(("coffee beans", "Food"),))
+    assert suggested_category(database, config, "Coffee beans", "Coffee shop") == "Food"
+    assert suggested_category(database, config, "coffee", "") == "Dining Out"
+    assert suggested_category(database, config, "unmatched synthetic", "") == "Uncategorized"
