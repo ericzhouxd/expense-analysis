@@ -26,7 +26,7 @@ dev = [
 ]
 # Only tests/test_rendered_geometry.py needs this, and only when -m rendered runs.
 rendered = [
-    "websockets>=15,<17",
+    "websockets>=15,<18",
 ]
 
 [build-system]
