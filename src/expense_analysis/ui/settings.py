@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from ..categories import save_category
-from ..choices import choice_options
+from ..choices import choice_options, remove_unused_choices, unused_choices
 from ..config import DATABASE_PATH, AppConfig
 from ..database import Database
 from .widgets import _page_heading, _section
@@ -55,6 +55,25 @@ def _render_settings(database: Database, config: AppConfig) -> None:
                 st.rerun()
     if st.session_state.pop("category_saved", False):
         st.success("Category saved locally.")
+    with st.expander("Remove unused categories, accounts and payment methods"):
+        st.caption(
+            "Only unused choices are listed. Transactions, planned bills, category rules "
+            "and entry defaults are protected. Removed choices stay removed after restart."
+        )
+        for kind, label in (
+            ("category", "Categories"),
+            ("account", "Accounts"),
+            ("payment_method", "Payment methods"),
+        ):
+            available = unused_choices(database, config, kind)
+            selected = st.multiselect(label, available, key=f"cleanup_{kind}")
+            if st.button(f"Remove selected {label.lower()}", disabled=not selected):
+                try:
+                    remove_unused_choices(database, config, kind, selected)
+                except ValueError as error:
+                    st.error(str(error))
+                else:
+                    st.rerun()
     st.html(
         """
         <div class="privacy-hero">

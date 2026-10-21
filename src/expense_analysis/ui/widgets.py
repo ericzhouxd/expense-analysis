@@ -92,11 +92,13 @@ def _style_figure(figure: go.Figure, *, height: int = 380) -> go.Figure:
     return figure
 
 
-def _plotly_chart(figure: go.Figure, *, key: str, height: int = 380) -> None:
+def _plotly_chart(figure: go.Figure, *, key: str, height: int = 380, scroll: bool = True) -> None:
     """Render every chart with the same sizing and interaction rules."""
     styled = _style_figure(figure, height=height)
     with st.container(
-        height=min(styled.layout.height + 4, 440), border=False, key=f"chart_panel_{key}"
+        height=min(styled.layout.height + 4, 440) if scroll else "content",
+        border=False,
+        key=f"chart_panel_{key}",
     ):
         st.plotly_chart(styled, width="stretch", height=styled.layout.height, config=PLOTLY_CONFIG)
 

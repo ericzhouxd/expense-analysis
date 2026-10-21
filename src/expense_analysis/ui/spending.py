@@ -63,8 +63,8 @@ def render_spending_summary(database: Database, *, key: str, details: bool = Fal
     st.html(
         '<div class="kpi-grid">'
         + "".join(
-            _kpi_card_markup(label, _currency(value / 100), detail=detail, featured=i == 0)
-            for i, (label, value, detail) in enumerate(cards)
+            _kpi_card_markup(label, _currency(value / 100), detail=detail, featured=False)
+            for label, value, detail in cards
         )
         + "</div>"
     )

@@ -903,23 +903,7 @@ hr {
   outline: 2px solid var(--accent);
   outline-offset: -3px;
 }
-[data-testid="stTextInput"] input.date-calendar-native {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  padding: 0 !important;
-  cursor: pointer;
-}
-.date-calendar-native::-webkit-calendar-picker-indicator {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  cursor: pointer;
-}
+
 [data-testid="stMultiSelect"] .react-aria-ComboBox > [role="group"],
 [data-testid="stMultiSelect"] [data-baseweb="select"] > div {
   min-height: var(--control-height);
@@ -1293,3 +1277,45 @@ body.jizhang-chart-open::before {
     scroll-behavior: auto;
   }
 }
+
+/* Review rows share the same rhythm and quiet dividers as transaction lists. */
+.overview-checks .insight-row {font-size:12px;line-height:1.5;padding:14px 0}
+.overview-checks .insight-row:first-child {padding-top:0}
+.overview-checks .insight-row > div {flex:1;min-width:0}
+.overview-checks .insight-row strong {font-size:14px;color:var(--ink)}
+.overview-checks .insight-row span:not(.insight-dot) {color:var(--muted)}
+.check-value {font-size:14px;font-weight:400;white-space:nowrap;color:var(--ink)}
+@media(max-width:600px) {
+  .overview-checks .insight-row {flex-wrap:wrap}
+  .check-value {margin-left:17px}
+}
+.date-calendar-popup {position:absolute;top:calc(100% + 6px);right:0;width:280px;z-index:1100;
+  padding:12px;background:var(--panel);color:var(--ink);border:1px solid var(--line);box-shadow:0 6px 18px #0003;font:14px var(--ui-font)}
+.date-calendar-popup[hidden] {display:none}
+.calendar-heading {display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.calendar-heading strong {font-size:14px}
+.calendar-days {display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center}
+.calendar-days span {font-size:12px;color:var(--muted);padding:6px 0}
+.date-calendar-popup button {background:var(--panel);color:var(--ink);border:1px solid transparent;
+  border-radius:0;min-height:30px;font:14px var(--ui-font);cursor:pointer}
+.date-calendar-popup button:hover,.date-calendar-popup button:focus-visible {border-color:var(--line);outline:1px solid var(--accent)}
+.date-calendar-popup button[aria-pressed=true] {background:var(--accent);color:#151713}
+.date-calendar-popup button:disabled {opacity:.4;cursor:default}
+
+.st-key-add_transaction_date [data-testid="stTextInputRootElement"] {overflow:visible}
+
+/* The category chart grows with its rows; the page owns vertical scrolling. */
+.st-key-chart_panel_category_breakdown {overflow:visible !important;scrollbar-gutter:auto}
+.date-calendar-button {display:grid;place-items:center;line-height:1}
+.date-calendar-button svg {display:block;flex:none}
+/* Keep the editor bounded by the viewport while preserving its own scroll area. */
+[class*="st-key-transaction_editor_"] [data-testid="stDataFrameResizable"] {max-height:clamp(180px,55dvh,520px)}
+
+/* Glide already supplies the cell boundary; don't add two clipped input outlines. */
+.gdg-input:focus-visible, .gdg-growing-entry textarea:focus-visible,
+.gdg-clip-region input:focus-visible, .gdg-clip-region textarea:focus-visible {
+  outline:none !important;box-shadow:none !important;
+}
+.date-validation {font:12px/1.4 var(--ui-font);color:var(--negative);margin-top:6px}
+.date-validation:empty {display:none}
+.st-key-add_transaction_date input[aria-invalid=true] {color:var(--negative)}

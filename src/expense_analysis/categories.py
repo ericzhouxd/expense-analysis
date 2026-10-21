@@ -30,7 +30,12 @@ def effective_config(database: Database, config: AppConfig) -> AppConfig:
             classes.setdefault(category, "Personal")
     classes.update(settings["classes"])
     aliases = settings["aliases"]
-    classes = {k: v for k, v in classes.items() if k not in aliases}
+    removed = settings.get("removed", {})
+    classes = {
+        k: v
+        for k, v in classes.items()
+        if k not in aliases and k not in removed.get("category", [])
+    }
     rules = {**dict(config.category_rules), **settings["rules"]}
     return replace(
         config,
@@ -38,6 +43,10 @@ def effective_config(database: Database, config: AppConfig) -> AppConfig:
         fixed_categories=tuple(k for k, v in classes.items() if v == "Fixed"),
         category_rules=tuple((k, aliases.get(v, v)) for k, v in rules.items()),
         category_aliases=tuple(aliases.items()),
+        accounts=tuple(v for v in config.accounts if v not in removed.get("account", [])),
+        payment_methods=tuple(
+            v for v in config.payment_methods if v not in removed.get("payment_method", [])
+        ),
     )
 
 
@@ -58,6 +67,9 @@ def save_category(
     name = next((v for v in existing if v.casefold() == name.casefold()), name)
     settings = preferences(database)
     settings["classes"][name] = spending_class
+    removed = settings.get("removed", {}).get("category", [])
+    if name in removed:
+        removed.remove(name)
     changed = 0
     plan = database.get_spending_plan()
     if source and source != name:
@@ -158,3 +170,16 @@ def suggestion_data(database: Database, config: AppConfig) -> dict[str, Any]:
         "rules": list(rules.items()),
         "merchants": merchants,
     }
+
+
+def suggested_category(
+    database: Database, config: AppConfig, description: str, merchant: str
+) -> str:
+    """Resolve the same deterministic suggestion when a form is saved immediately."""
+    data = suggestion_data(database, config)
+    rules = sorted(data["rules"], key=lambda rule: len(rule[0]), reverse=True)
+    for text in (description, merchant):
+        for keyword, category in rules:
+            if normalize_text(keyword) in normalize_text(text):
+                return str(category)
+    return str(data["merchants"].get(normalize_text(merchant), "Uncategorized"))

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -12,13 +12,12 @@ import streamlit as st
 from ..analytics import (
     transactions_frame,
 )
+from ..categories import suggested_category
 from ..category_entry import category_entry
 from ..choices import choice_options
 from ..config import AppConfig
 from ..database import Database, DuplicateTransactionError
 from ..models import (
-    MAX_FUTURE_TRANSACTION_DAYS,
-    MIN_TRANSACTION_DATE,
     TransactionDraft,
     parse_amount_cents,
     validate_transaction_date,
@@ -30,6 +29,7 @@ from .state import (
     _invalidate_activity_filters,
     _reset_transaction_editor,
 )
+from .viewport import editor_viewport
 from .widgets import _currency, _page_heading, _transaction_list
 
 # Glide renders a fixed 35px row under roughly 48px of header and toolbar, so a
@@ -39,7 +39,7 @@ _EDITOR_CHROME_HEIGHT = 48
 
 
 def _editor_height(row_count: int) -> int:
-    return max(200, min(520, _EDITOR_CHROME_HEIGHT + _EDITOR_ROW_HEIGHT * row_count))
+    return max(120, min(520, _EDITOR_CHROME_HEIGHT + _EDITOR_ROW_HEIGHT * row_count))
 
 
 def _reveal_saved_transaction(transaction_id: str) -> None:
@@ -108,7 +108,7 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
             )
 
     heading, view_control, add_action = st.columns(
-        (4, 1.1, 1.1), vertical_alignment="bottom", gap="large"
+        (3, 1.6, 1.6), vertical_alignment="bottom", gap="small"
     )
     with heading:
         _page_heading(
@@ -187,7 +187,7 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
         {
             "Delete": False,
             "ID": frame["id"],
-            "Date": frame["transaction_date"].dt.date,
+            "Date": frame["transaction_date"].dt.strftime("%Y-%m-%d"),
             "Description": frame["description"],
             "Amount": frame["amount"],
             "Category": frame["category"],
@@ -211,30 +211,48 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
     display_frame = editor_frame.copy(deep=True)
     for column in choice_columns:
         display_frame[column] = display_frame[column].map(lambda value: [value] if value else [])
+    narrow, viewport_height = editor_viewport()
+    with st.popover("Table columns", icon=":material/view_column:"):
+        shown_columns = st.multiselect(
+            "Visible fields",
+            [column for column in display_frame if column != "ID"],
+            default=[],
+            key="transaction_visible_columns",
+            help="Leave empty for a screen-sized view, or choose fields to edit. "
+            "Hidden values are preserved.",
+        )
+    visible = shown_columns or (
+        ["Description", "Amount"] if narrow else ["Date", "Description", "Amount", "Category"]
+    )
+    if narrow and not shown_columns:
+        st.caption("Compact view · use Table columns to edit dates, categories or other fields.")
     edited = st.data_editor(
         display_frame,
         hide_index=True,
         width="stretch",
-        height=_editor_height(len(editor_frame)),
+        height=min(_editor_height(len(editor_frame)), viewport_height),
         disabled=["ID"],
+        column_order=visible,
         column_config={
-            "Delete": st.column_config.CheckboxColumn("Delete"),
+            "Delete": st.column_config.CheckboxColumn("Delete", width=60),
             "ID": None,
-            "Description": st.column_config.TextColumn("Description", required=True),
-            "Date": st.column_config.DateColumn(
+            "Description": st.column_config.TextColumn(
+                "Description", required=True, width="medium"
+            ),
+            "Date": st.column_config.TextColumn(
                 "Date",
-                format="YYYY-MM-DD",
-                width=160,
-                min_value=MIN_TRANSACTION_DATE,
-                max_value=date.today() + timedelta(days=MAX_FUTURE_TRANSACTION_DAYS),
+                width=140,
                 required=True,
+                help="Year-month-day (YYYY-MM-DD). Dates keep this order while editing.",
+                validate=r"^\d{4}-\d{2}-\d{2}$",
             ),
             "Amount": st.column_config.NumberColumn(
-                "Amount", min_value=0.01, step=0.01, format="$%.2f", required=True
+                "Amount", min_value=0.01, step=0.01, format="$%.2f", required=True, width=100
             ),
             **{
                 column: st.column_config.MultiselectColumn(
                     column,
+                    width=150,
                     options=choice_options(database, config, kind),
                     accept_new_options=True,
                     required=column == "Category",
@@ -256,7 +274,7 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
         changes = collect_changes(display_frame, edited)
     except ValueError as exc:
         st.error(str(exc))
-    _, review_column, discard_column = st.columns((4, 1.3, 1.3), vertical_alignment="center")
+    _, review_column, discard_column = st.columns((2, 2, 2), vertical_alignment="center")
     if review_column.button(
         f"Review changes ({len(changes)})",
         type="primary",
@@ -271,7 +289,9 @@ def _render_transactions(database: Database, frame: pd.DataFrame, config: AppCon
 
 @st.dialog("Add a transaction", width="large")
 def _add_transaction_dialog(database: Database, config: AppConfig) -> None:
-    st.caption("Description and amount are required.")
+    st.caption(
+        "Enter: next · Shift+Enter: back · ⌘/Ctrl+Enter: save. Description and amount required."
+    )
     with st.form("add_transaction_form", clear_on_submit=True):
         left, right = st.columns(2)
         transaction_date_text = left.text_input(
@@ -304,8 +324,8 @@ def _add_transaction_dialog(database: Database, config: AppConfig) -> None:
             "Account",
             choice_options(database, config, "account"),
             index=(
-                config.accounts.index(config.default_account)
-                if config.default_account in config.accounts
+                choice_options(database, config, "account").index(config.default_account)
+                if config.default_account in choice_options(database, config, "account")
                 else 0
             ),
             key="add_transaction_account",
@@ -315,8 +335,11 @@ def _add_transaction_dialog(database: Database, config: AppConfig) -> None:
             "Payment method",
             choice_options(database, config, "payment_method"),
             index=(
-                config.payment_methods.index(config.default_payment_method)
-                if config.default_payment_method in config.payment_methods
+                choice_options(database, config, "payment_method").index(
+                    config.default_payment_method
+                )
+                if config.default_payment_method
+                in choice_options(database, config, "payment_method")
                 else 0
             ),
             key="add_transaction_payment_method",
@@ -329,6 +352,8 @@ def _add_transaction_dialog(database: Database, config: AppConfig) -> None:
             key="add_transaction_submit",
         )
     if submitted:
+        if not entry.get("manual", False):
+            category = suggested_category(database, config, description, merchant)
         try:
             transaction_date = validate_transaction_date(transaction_date_text)
         except ValueError as exc:

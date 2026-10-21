@@ -1,8 +1,9 @@
 <div class="category-entry">
-      <label>Description<input name="description" autocomplete="off" placeholder="What was this for?" /></label>
-      <label>Merchant<input name="merchant" autocomplete="off" placeholder="Optional" /></label>
-      <label>Category<input name="category" list="expense-category-options" autocomplete="off" /></label>
-      <datalist id="expense-category-options"></datalist>
-      <div class="category-entry-help"><span role="status" aria-live="polite">Suggestions update as you type</span>
-      <button type="button">Use automatic category</button></div>
-    </div>
+  <label><span>Description</span><input name="description" autocomplete="off" placeholder="What was this for?" /></label>
+  <label><span>Merchant</span><input name="merchant" autocomplete="off" placeholder="Optional" /></label>
+  <label class="category-choice"><span>Category</span><span class="category-input-group"><input name="category" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="expense-category-options" autocomplete="off" /><button class="category-toggle" type="button" aria-label="Show categories" aria-haspopup="listbox" tabindex="-1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button></span>
+    <div id="expense-category-options" role="listbox" hidden></div>
+  </label>
+  <div class="category-entry-help"><span role="status" aria-live="polite">Suggestions update as you type</span>
+    <button class="category-reset" type="button">Use automatic category</button></div>
+</div>

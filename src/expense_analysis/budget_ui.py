@@ -94,12 +94,13 @@ def _setup(database: Database, plan: SpendingPlan | None, config: AppConfig) -> 
 
     with _section(
         "plan-setup",
-        "Make the plan yours",
-        "UCLA undergraduate estimates are a starting point, not a bill or available cash. "
-        "Nothing is saved until you confirm your costs.",
+        "Set up your spending plan" if plan is None else "Update your plan",
+        "Choose your timeframe, money available, and bills. "
+        "UCLA estimates are editable starting points.",
     ):
         reference: dict[str, Any]
         if plan is None:
+            st.markdown("**1 · Choose a starting estimate**")
             first, second, third = st.columns(3)
             cohort = first.selectbox("UC entry cohort", list(UCLA_2026["cohorts"]))
             housing = second.selectbox("Housing benchmark", list(UCLA_2026["housing"]))
@@ -146,10 +147,11 @@ def _setup(database: Database, plan: SpendingPlan | None, config: AppConfig) -> 
             "campus fees and insurance are separate."
         )
         with st.form("student_plan_setup"):
+            st.markdown("**2 · Your timeframe**" if plan is None else "**Your timeframe**")
             name = st.text_input("Plan name", value=plan.name if plan else "My UCLA spending plan")
             first, second = st.columns(2)
             start = first.date_input(
-                "First budget month", value=plan.start if plan else date(2026, 10, 1)
+                "First budget month", value=plan.start if plan else date.today().replace(day=1)
             )
             duration = second.selectbox(
                 "Coverage (months)", [9, 12], index=plan.months // 3 - 3 if plan else 0
@@ -158,6 +160,10 @@ def _setup(database: Database, plan: SpendingPlan | None, config: AppConfig) -> 
                 "Dates use full months. Quarters are three-month budget blocks from "
                 "your start month, not UCLA instruction dates. A 12-month lease needs "
                 "12 months of costs and a summer target."
+            )
+            st.markdown("**3 · Money available**" if plan is None else "**Money available**")
+            st.caption(
+                "Use money you plan to spend, including bills. Set aside a buffer for surprises."
             )
             a, b, c = st.columns(3)
             academic = a.number_input(
@@ -181,13 +187,11 @@ def _setup(database: Database, plan: SpendingPlan | None, config: AppConfig) -> 
                 step=50.0,
                 value=plan.buffer_cents / 100 if plan else 0.0,
             )
-            st.markdown("**Committed costs**")
+            st.markdown("**4 · Your bills**" if plan is None else "**Your bills**")
             st.caption(
-                "Enter your real rent and utilities, including summer if needed. "
-                "Amount is per month, per three-month cycle, or the total for the "
-                "coverage. Month 1 is the start above. For prepaid insurance or "
-                "annual tuition, use Coverage total. Add books, flights, phone, or "
-                "other reserves as extra rows. Zero means no planned reserve."
+                "Replace estimates with your actual bills. For rent, enter the monthly amount "
+                "and choose Monthly. For prepaid tuition, choose Coverage total. "
+                "Month 1 is your first budget month; zero means no reserve."
             )
             edited = st.data_editor(
                 pd.DataFrame(editor_rows),
@@ -217,10 +221,8 @@ def _setup(database: Database, plan: SpendingPlan | None, config: AppConfig) -> 
                 },
             )
             st.caption(
-                "Each category can match only one bill in a given month. A combined "
-                "housing/meal-plan charge should be reserved once. Unmatched "
-                "expenses—including uncategorized ones—always count as everyday "
-                "spending. Type a new category and press Enter to confirm it."
+                "Choose the transaction categories that pay each bill. Use each category once "
+                "per month. Everything else counts as everyday spending."
             )
             confirmed = st.checkbox(
                 "I checked my residency, tuition, rent, utilities, insurance and summer coverage. "
@@ -302,6 +304,7 @@ def _payment_allocations(database: Database, plan: SpendingPlan, rows: list[dict
             else:
                 allocations[selected] = budget_month
             database.save_spending_plan(replace(plan, allocations=allocations))
+            st.session_state["payment_timing_saved"] = True
             st.rerun()
         if plan.allocations:
             st.caption(f"{len(plan.allocations)} explicit payment allocation(s) saved locally.")
@@ -311,6 +314,8 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
     from .ui.widgets import _section
 
     plan = database.get_spending_plan()
+    if st.session_state.pop("payment_timing_saved", False):
+        st.success("Payment timing updated. Your transaction date has not changed.")
     if st.session_state.pop("plan_saved", False):
         st.success("Spending plan saved locally.")
     if plan is None:
@@ -318,12 +323,17 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
         return
     from .ui.spending import render_spending_summary
 
-    summary = render_spending_summary(database, key="budgets", details=True)
-    with _section("allocation-details", "Monthly and quarterly allocation details"):
+    with st.expander("Edit plan & committed costs"):
+        _setup(database, plan, config)
+    with _section(
+        "allocation-details",
+        "Your everyday spending",
+        "Choose a month or quarter to see what is left after bills.",
+    ):
         rows = database.list_transactions()  # Deliberately independent of sidebar filters.
         result = calculate_plan(
             plan,
-            [r for r in rows if str(r["transaction_date"])[:10] <= summary["as_of"].isoformat()],
+            [r for r in rows if str(r["transaction_date"])[:10] <= date.today().isoformat()],
         )
         st.caption(
             f"{plan.name} · {plan.start:%b %Y}–{month_after(plan.start, plan.months - 1):%b %Y} · "
@@ -331,7 +341,7 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
         )
         first, second = st.columns([1, 2])
         view = first.radio("View", ["Monthly", "Quarterly"], horizontal=True)
-        today = summary["as_of"]
+        today = date.today()
         current = min(
             max((today.year - plan.start.year) * 12 + today.month - plan.start.month, 0),
             plan.months - 1,
@@ -387,7 +397,7 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
             )
         left, right = st.columns([3, 2])
         with left:
-            with _section("period-allowance", "How the period allowance is calculated"):
+            with st.expander("How your allowance is worked out"):
                 st.dataframe(
                     pd.DataFrame(
                         [
@@ -441,7 +451,7 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
                     st.warning(
                         "Uncategorized expenses are included. Review them for any bill payments."
                     )
-        with st.expander("Bills & reserves", expanded=False):
+        with st.expander("Bills paid & money set aside", expanded=True):
             st.caption(
                 "Whole bill cycles overlapping this view, not cash due this month. "
                 "Paying a bill replaces its reserve; spending above the reserve "
@@ -463,7 +473,15 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
                         "Over plan": money(max(0, bill["paid"] - bill["planned"])),
                     }
                 )
-            st.dataframe(pd.DataFrame(bill_rows), hide_index=True, width="stretch")
+            if bill_rows:
+                st.dataframe(pd.DataFrame(bill_rows), hide_index=True, width="stretch")
+            else:
+                st.info(
+                    "No planned bills in this period. "
+                    "Add recurring costs under Edit plan & committed costs."
+                )
+        with st.expander("School-year overview & comparisons"):
+            render_spending_summary(database, key="budgets", details=True)
         with st.expander("Whole-plan outlook & benchmark"):
             st.caption(
                 f"Reference: {plan.reference['school']} {plan.reference['year']}, "
@@ -531,8 +549,6 @@ def render_budget_page(database: Database, config: AppConfig) -> None:
                 )
             else:
                 st.caption("No recorded expenses or refunds allocated to this period.")
-        with st.expander("Edit plan & committed costs"):
-            _setup(database, plan, config)
         with st.expander("How this is calculated"):
             st.write(
                 "Target − committed costs − buffer = everyday allowance. Bill cycles "

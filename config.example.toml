@@ -29,11 +29,11 @@ fixed = [
 
 [choices]
 accounts = ["Checking", "Credit Card", "Cash"]
-payment_methods = ["Card", "Mobile Wallet", "Bank Transfer", "Online", "Cash"]
+payment_methods = ["Card", "Apple Pay", "Bank Transfer", "Online", "Cash"]
 
 [defaults]
 account = "Checking"
-payment_method = "Card"
+payment_method = "Apple Pay"
 
 [category_rules]
 coffee = "Dining Out"

@@ -71,3 +71,29 @@ def test_choice_options_fall_back_for_proxies_without_a_distinct_query(tmp_path)
     )
     options = choice_options(Proxy(database), AppConfig(), "account")  # type: ignore[arg-type]
     assert "Travel wallet" in options
+
+
+def test_remove_unused_choices_persists_and_protects_references(tmp_path):
+    from expense_analysis.categories import effective_config, save_category
+    from expense_analysis.choices import remove_unused_choices, unused_choices
+
+    database = Database(tmp_path / "cleanup.sqlite3")
+    database.initialize()
+    config = AppConfig(category_rules=(("coffee", "Dining Out"),))
+    database.add_transaction(TransactionDraft(date(2026, 9, 1), "Synthetic", 100, "Food"))
+    for kind, name in (("category", "Tech"), ("account", "Cash"), ("payment_method", "Online")):
+        assert name in unused_choices(database, config, kind)
+        remove_unused_choices(database, config, kind, [name])
+        assert name not in choice_options(database, config, kind)
+        assert name not in choice_options(database, effective_config(database, config), kind)
+    for kind, name in (
+        ("category", "Food"),
+        ("category", "Dining Out"),
+        ("category", "Uncategorized"),
+        ("account", "Checking"),
+        ("payment_method", "Apple Pay"),
+    ):
+        with pytest.raises(ValueError, match="in use"):
+            remove_unused_choices(database, config, kind, [name])
+    save_category(database, config, "Tech", "Personal")
+    assert "Tech" in effective_config(database, config).categories

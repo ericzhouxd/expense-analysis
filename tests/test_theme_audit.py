@@ -21,7 +21,7 @@ def rendered_seed():
     def seed(env):
         database = Database(Path(env["EXPENSE_ANALYSIS_DATA_DIR"]) / "expenses.sqlite3")
         database.initialize()
-        for month in range(1, 9):
+        for month in range(1, date.today().month + 1):
             for category, amount, kind in (
                 ("Food", 28000 + month * 1300, "expense"),
                 ("Transportation", 4200, "expense"),
@@ -33,7 +33,7 @@ def rendered_seed():
             ):
                 database.add_transaction(
                     TransactionDraft(
-                        date(2026, month, 12),
+                        date(date.today().year, month, min(12, date.today().day)),
                         f"Synthetic {category}",
                         amount,
                         category,
@@ -44,8 +44,8 @@ def rendered_seed():
         database.save_spending_plan(
             SpendingPlan(
                 "Synthetic plan",
-                date(2026, 1, 1),
-                9,
+                date(date.today().year, 1, 1),
+                12,
                 1100000,
                 0,
                 9000,
@@ -88,7 +88,8 @@ JSON.stringify((() => {
     + '[data-testid=stAlert] p, .soft-empty span, .empty-card p, '
     + '.balance-panel h2, .balance-panel p, .balance-value, .summary-row dt, '
     + '.summary-row dd, .usage-label, .usage-note, .theme-control-label, '
-    + '.section-heading h2, .section-heading span';
+    + '.section-heading h2, .section-heading span, .overview-checks strong, '
+    + '.overview-checks .check-value, .overview-checks div > span';
   return [...document.querySelectorAll(selectors)]
     .filter(el => el.getClientRects().length && el.textContent.trim())
     .map(el => {
@@ -148,8 +149,8 @@ def test_all_pages_text_contrast_and_theme_switching(page, theme):  # noqa: F811
                 base64.b64decode(screenshot["result"]["data"])
             )
             page.evaluate(
-                "const main = document.querySelector('[data-testid=stMain]');"
-                "main.scrollTo({top: main.scrollHeight, behavior: 'instant'});"
+                "{ const main = document.querySelector('[data-testid=stMain]');"
+                "main.scrollTo({top: main.scrollHeight, behavior: 'instant'}); }"
             )
             page.evaluate(
                 "new Promise(resolve => requestAnimationFrame("
@@ -220,3 +221,17 @@ def test_mobile_pages_keep_content_inside_viewport(page, theme):  # noqa: F811
                 ".getAttribute('aria-expanded') === 'true'"
             )
             page.evaluate("new Promise(resolve => setTimeout(resolve, 350))")
+
+
+def test_overview_category_chart_has_no_internal_scrollbar(page):  # noqa: F811
+    page.select_page("Overview")
+    page.wait_js(
+        "!!document.querySelector('.st-key-chart_panel_category_breakdown .js-plotly-plot')"
+    )
+    measurements = page.measure("""JSON.stringify((() => {
+        const panel = document.querySelector('.st-key-chart_panel_category_breakdown');
+        return {scroll:panel.scrollHeight, height:panel.clientHeight,
+            overflow:getComputedStyle(panel).overflowY};
+    })())""")
+    assert measurements["scroll"] <= measurements["height"] + 2, measurements
+    assert measurements["overflow"] == "visible", measurements
