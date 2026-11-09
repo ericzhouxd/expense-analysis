@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
@@ -9,8 +10,8 @@ from datetime import date
 from pathlib import Path
 
 from .config import DATABASE_PATH, ensure_local_directories
-from .models import TransactionDraft, new_transaction_id
-from .spending_plan import SpendingPlan
+from .models import TransactionDraft, new_transaction_id, parse_amount_cents
+from .term_budget import BudgetSettings
 
 CHOICE_COLUMNS = frozenset({"category", "account", "payment_method"})
 
@@ -95,19 +96,38 @@ class Database:
                 connection.execute("DROP TABLE IF EXISTS budgets")
                 connection.execute("PRAGMA user_version = 3")
 
-    def get_spending_plan(self) -> SpendingPlan | None:
+    def get_budget_settings(self) -> BudgetSettings | None:
         with self.connect() as connection:
             row = connection.execute("SELECT payload FROM spending_plans WHERE id = 1").fetchone()
-        return SpendingPlan.from_dict(json.loads(row["payload"])) if row else None
+        return BudgetSettings.from_dict(json.loads(row["payload"])) if row else None
 
-    def save_spending_plan(self, plan: SpendingPlan) -> None:
-        payload = json.dumps(plan.to_dict(), ensure_ascii=False)
+    def save_budget_settings(self, settings: BudgetSettings) -> None:
+        payload = json.dumps(settings.to_dict(), ensure_ascii=False)
         with self.connect() as connection:
             connection.execute(
                 """INSERT INTO spending_plans (id, payload) VALUES (1, ?)
                 ON CONFLICT(id) DO UPDATE SET payload = excluded.payload,
                 updated_at = CURRENT_TIMESTAMP""",
                 (payload,),
+            )
+
+    def get_spending_rules(self) -> dict:
+        with self.connect() as connection:
+            row = connection.execute("SELECT payload FROM category_settings WHERE id=1").fetchone()
+        return json.loads(row[0]).get("spending_rules", {}) if row else {}
+
+    def save_spending_rules(self, rules: dict) -> None:
+        from .spending_treatment import validate_rules
+
+        validate_rules(rules)
+        with self.connect() as connection:
+            row = connection.execute("SELECT payload FROM category_settings WHERE id=1").fetchone()
+            settings = json.loads(row[0]) if row else {"classes": {}, "aliases": {}, "rules": {}}
+            settings["spending_rules"] = rules
+            connection.execute(
+                "INSERT INTO category_settings(id,payload) VALUES(1,?) "
+                "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload",
+                (json.dumps(settings, ensure_ascii=False),),
             )
 
     @staticmethod
@@ -173,6 +193,72 @@ class Database:
                 else:
                     imported += 1
         return ImportResult(imported=imported, duplicates_skipped=duplicates)
+
+    def restore_transactions(self, rows: Iterable[tuple[str, str, TransactionDraft]]) -> int:
+        """Re-insert deleted transactions with their original IDs, for Undo.
+
+        Each item is ``(id, created_at, draft)``. IDs that exist again are skipped, so a
+        repeated Undo cannot duplicate a transaction.
+        """
+        restored = 0
+        with self.connect() as connection:
+            for transaction_id, created_at, draft in rows:
+                clean = draft.validated()
+                exists = connection.execute(
+                    "SELECT 1 FROM transactions WHERE id = ?", (transaction_id,)
+                ).fetchone()
+                if exists or not transaction_id:
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO transactions (
+                        id, transaction_date, description, amount_cents, category, account,
+                        payment_method, merchant, transaction_type, notes, fingerprint,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+                    """,
+                    (
+                        transaction_id,
+                        clean.transaction_date.isoformat(),
+                        clean.description,
+                        clean.amount_cents,
+                        clean.category,
+                        clean.account,
+                        clean.payment_method,
+                        clean.merchant,
+                        clean.transaction_type,
+                        clean.notes,
+                        clean.fingerprint,
+                        created_at or None,
+                    ),
+                )
+                restored += 1
+        return restored
+
+    def choice_counts(self, kind: str) -> dict[str, int]:
+        """How many transactions use each value of an editable choice column."""
+        if kind not in CHOICE_COLUMNS:
+            raise ValueError("This field uses fixed choices")
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"SELECT {kind} AS value, COUNT(*) AS uses FROM transactions GROUP BY {kind}"
+            ).fetchall()
+        return {str(row["value"]): int(row["uses"]) for row in rows}
+
+    def latest_with_choice(self, kind: str, value: str, limit: int) -> list[dict[str, object]]:
+        if kind not in CHOICE_COLUMNS:
+            raise ValueError("This field uses fixed choices")
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT id, transaction_date, description, amount_cents, category, account,
+                       payment_method, merchant, transaction_type
+                FROM transactions WHERE {kind} = ?
+                ORDER BY transaction_date DESC, created_at DESC LIMIT ?
+                """,
+                (value, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def update_transaction(self, transaction_id: str, draft: TransactionDraft) -> None:
         clean = draft.validated()
@@ -241,11 +327,21 @@ class Database:
             clauses.append("transaction_date <= ?")
             parameters.append(end.isoformat())
         if search.strip():
-            clauses.append(
-                "(description LIKE ? OR merchant LIKE ? OR notes LIKE ? OR category LIKE ?)"
-            )
-            search_pattern = f"%{search.strip()}%"
-            parameters.extend([search_pattern] * 4)
+            text_columns = ("description", "merchant", "notes", "category", "account")
+            matches = [f"{column} LIKE ? ESCAPE '\\'" for column in text_columns]
+            matches.append("payment_method LIKE ? ESCAPE '\\'")
+            # Escape LIKE wildcards so "100%" or "_" search for those characters.
+            escaped = re.sub(r"([\\%_])", r"\\\1", search.strip())
+            parameters.extend([f"%{escaped}%"] * len(matches))
+            # "12.99" or "$1,200" also finds that exact amount.
+            try:
+                amount = parse_amount_cents(search)
+            except ValueError:
+                amount = 0
+            if amount > 0:
+                matches.append("amount_cents = ?")
+                parameters.append(amount)
+            clauses.append(f"({' OR '.join(matches)})")
         for column, values in (
             ("category", categories),
             ("transaction_type", transaction_types),

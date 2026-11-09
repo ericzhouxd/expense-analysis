@@ -10,7 +10,7 @@ from typing import Any
 
 from .config import AppConfig
 from .database import Database
-from .models import TransactionDraft, normalize_text
+from .models import TransactionDraft, keyword_matches, normalize_text
 
 
 def preferences(database: Database) -> dict:
@@ -28,6 +28,10 @@ def effective_config(database: Database, config: AppConfig) -> AppConfig:
     for category in database.list_transaction_categories():
         if category != "Uncategorized":
             classes.setdefault(category, "Personal")
+    budget = database.get_budget_settings()
+    if budget:
+        for category in budget.bill_categories:
+            classes.setdefault(category, "Fixed")
     classes.update(settings["classes"])
     aliases = settings["aliases"]
     removed = settings.get("removed", {})
@@ -36,16 +40,35 @@ def effective_config(database: Database, config: AppConfig) -> AppConfig:
         for k, v in classes.items()
         if k not in aliases and k not in removed.get("category", [])
     }
-    rules = {**dict(config.category_rules), **settings["rules"]}
+    hidden_rules = set(settings.get("removed_rules", []))
+    rules = {
+        k: v
+        for k, v in {**dict(config.category_rules), **settings["rules"]}.items()
+        if normalize_text(k) not in hidden_rules
+    }
+    choice_aliases = settings.get("choice_aliases", {})
+
+    def vocabulary(kind: str, values: tuple[str, ...]) -> tuple[str, ...]:
+        aliases_for_kind = choice_aliases.get(kind, {})
+        resolved = (
+            aliases_for_kind.get(v, v)
+            for v in (*values, *settings.get("choices", {}).get(kind, []))
+        )
+        return tuple(dict.fromkeys(v for v in resolved if v not in removed.get(kind, [])))
+
     return replace(
         config,
         personal_categories=tuple(k for k, v in classes.items() if v == "Personal"),
         fixed_categories=tuple(k for k, v in classes.items() if v == "Fixed"),
         category_rules=tuple((k, aliases.get(v, v)) for k, v in rules.items()),
         category_aliases=tuple(aliases.items()),
-        accounts=tuple(v for v in config.accounts if v not in removed.get("account", [])),
-        payment_methods=tuple(
-            v for v in config.payment_methods if v not in removed.get("payment_method", [])
+        accounts=vocabulary("account", config.accounts),
+        payment_methods=vocabulary("payment_method", config.payment_methods),
+        default_account=choice_aliases.get("account", {}).get(
+            config.default_account, config.default_account
+        ),
+        default_payment_method=choice_aliases.get("payment_method", {}).get(
+            config.default_payment_method, config.default_payment_method
         ),
     )
 
@@ -64,14 +87,16 @@ def save_category(
     if not name or name == "Uncategorized" or spending_class not in ("Personal", "Fixed"):
         raise ValueError("Enter a category name and choose Personal or Fixed.")
     existing = effective_config(database, config).categories
-    name = next((v for v in existing if v.casefold() == name.casefold()), name)
+    name = next((v for v in existing if v != source and v.casefold() == name.casefold()), name)
     settings = preferences(database)
+    # Allow restoring a previously renamed name without creating alias cycles.
+    settings["aliases"].pop(name, None)
     settings["classes"][name] = spending_class
     removed = settings.get("removed", {}).get("category", [])
     if name in removed:
         removed.remove(name)
     changed = 0
-    plan = database.get_spending_plan()
+    budget = database.get_budget_settings()
     if source and source != name:
         if source == "Uncategorized":
             raise ValueError("Uncategorized is reserved; correct those transactions individually.")
@@ -82,23 +107,19 @@ def save_category(
         }
         settings["aliases"][source] = name
         settings["classes"].pop(source, None)
+        treatments = settings.get("spending_rules", {}).get("categories", {})
+        if source in treatments:
+            old_treatment = treatments.pop(source)
+            treatments.setdefault(name, old_treatment)
         settings["rules"] = {k: name if v == source else v for k, v in settings["rules"].items()}
-        if plan:
-            plan = replace(
-                plan,
-                commitments=tuple(
-                    replace(
-                        c,
-                        categories=tuple(
-                            dict.fromkeys(name if v == source else v for v in c.categories)
-                        ),
-                    )
-                    for c in plan.commitments
-                ),
-            )
-            plan.validate()  # Reject merges that would make bill mappings overlap.
+        if budget:
+            # Rejects merges that would map one category to two bills.
+            budget = budget.rename_category(source, name)
     if keyword.strip():
         settings["rules"][normalize_text(keyword)] = name
+        hidden = settings.get("removed_rules", [])
+        if normalize_text(keyword) in hidden:
+            hidden.remove(normalize_text(keyword))
     with database.connect() as connection:
         if source and source != name:
             for row in connection.execute(
@@ -126,10 +147,10 @@ def save_category(
                     (name, draft.fingerprint, row["id"]),
                 )
                 changed += 1
-            if plan:
+            if budget:
                 connection.execute(
                     "UPDATE spending_plans SET payload=?, updated_at=CURRENT_TIMESTAMP WHERE id=1",
-                    (json.dumps(plan.to_dict(), ensure_ascii=False),),
+                    (json.dumps(budget.to_dict(), ensure_ascii=False),),
                 )
         connection.execute(
             "INSERT INTO category_settings(id,payload) VALUES(1,?) ON "
@@ -161,6 +182,7 @@ def suggestion_data(database: Database, config: AppConfig) -> dict[str, Any]:
         "tuition": "Tuition",
         "pharmacy": "Medicine",
         "uber": "Transportation",
+        "uber eats": "Dining Out",
         "bus": "Transportation",
     }
     rules = {k: v for k, v in starter.items() if v in config.categories}
@@ -180,6 +202,37 @@ def suggested_category(
     rules = sorted(data["rules"], key=lambda rule: len(rule[0]), reverse=True)
     for text in (description, merchant):
         for keyword, category in rules:
-            if normalize_text(keyword) in normalize_text(text):
+            if keyword_matches(keyword, text):
                 return str(category)
     return str(data["merchants"].get(normalize_text(merchant), "Uncategorized"))
+
+
+def keyword_rules(database: Database, config: AppConfig) -> list[dict[str, str]]:
+    """Every active auto-categorization rule, and whether config.toml or Settings owns it."""
+    settings = preferences(database)
+    configured = {normalize_text(k) for k, _ in config.category_rules}
+    return [
+        {
+            "keyword": keyword,
+            "category": category,
+            "source": "Settings" if keyword in settings["rules"] else "config.toml",
+        }
+        for keyword, category in sorted(effective_config(database, config).category_rules)
+        if keyword in settings["rules"] or normalize_text(keyword) in configured
+    ]
+
+
+def delete_keyword_rules(database: Database, keywords: list[str]) -> None:
+    """Remove saved rules and hide config.toml rules without rewriting that file."""
+    settings = preferences(database)
+    hidden = set(settings.get("removed_rules", []))
+    for keyword in keywords:
+        settings["rules"].pop(keyword, None)
+        hidden.add(normalize_text(keyword))
+    settings["removed_rules"] = sorted(hidden)
+    with database.connect() as connection:
+        connection.execute(
+            "INSERT INTO category_settings(id,payload) VALUES(1,?) ON "
+            "CONFLICT(id) DO UPDATE SET payload=excluded.payload",
+            (json.dumps(settings, ensure_ascii=False),),
+        )

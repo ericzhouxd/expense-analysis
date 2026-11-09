@@ -1,8 +1,8 @@
 # 記帳
 
 A private, local-first expense tracker and analysis dashboard. Transactions stay in
-an ignored SQLite database on your computer; the app binds only to `127.0.0.1` and
-Streamlit telemetry is disabled.
+an ignored SQLite database on your computer, and the app answers only on
+`127.0.0.1`.
 
 ## Documentation
 
@@ -12,15 +12,19 @@ Streamlit telemetry is disabled.
 ## Start the app
 
 This project uses a uv-managed Python 3.12 runtime and a project-local `.venv`.
-It does not use packages from pyenv or the global Python installation.
+It does not use packages from pyenv or the global Python installation. The
+interface is a small React app that needs Node.js 20.19 or newer to build once.
 
 ```bash
 uv sync --all-groups
-uv run streamlit run app.py
+npm --prefix web ci
+npm --prefix web run build
+uv run expense-app
 ```
 
-Open <http://127.0.0.1:8501>. You do not need to activate the environment because
-`uv run` selects it automatically.
+`expense-app` serves the built interface and its local API on
+<http://127.0.0.1:8765> and opens it in your browser (`--no-browser` skips that,
+`--port` changes the port). Rebuild the interface after pulling changes to `web/`.
 
 ## Import CSV data
 
@@ -31,28 +35,26 @@ anything is saved. You can also import a local file from the command line:
 uv run expense-import /path/to/transactions.csv
 ```
 
-Import validation handles quoted commas, currency formatting, refunds, missing
-fields, unknown categories, category rules, and duplicate transactions.
+Import validation handles quoted commas, currency formatting, refunds, bank-style
+negative amounts, missing fields, unknown categories, category rules, and duplicate
+transactions. A backup exported by the app re-imports cleanly as duplicates.
 
 ## What the app includes
 
-- Quick transaction entry from the Transactions page with keyboard progression
-- Searchable, filterable, bulk-editable transaction table
+- An LED instrument panel: safe-to-spend today, pace meter, purchase ticker, dot calendar
+- ⌘K quick add: type `12.50 chipotle lunch yesterday apple pay` and press Enter
+- Day-grouped transaction list with inline editing, keyboard navigation, bulk
+  category/treatment changes, and Undo for deletes
 - Explicit expenses, refunds, income, and transfers
-- CSV preview, validation, duplicate detection, import, and export
-- KPI cards and interactive category and monthly charts
-- 3-, 6-, and 12-month rolling calculations
-- Like-for-like month and year comparisons
-- Partial-period labels and end-of-month run-rate projections
-- UCLA monthly/quarterly spending plans with cohort tuition, bill reserves and everyday allowance
-- Spending-driver, recurring-charge, and anomaly analysis
+- CSV preview, validation, duplicate detection, category mapping, import, and export
+- 3-, 6-, and 12-month rolling averages and like-for-like comparisons
+- Weekly budget line on the real UCLA quarter calendar (Week 0, Weeks 1–10, finals),
+  with unspent money counted as saved, plus bills and big purchases tracked separately
+- Spending-driver, recurring-charge (with next-expected dates), and anomaly analysis
 - Cash-flow, savings-rate, and academic-period analysis
-- Sharp editorial/Y2K interface with brushed-metal and halftone textures
-- Light and dark themes with locally bundled Departure Mono interface typography
+- Square-cornered dark "instrument" design with locally bundled Departure Mono and Doto type
 
 ## Local commands
-
-Switch appearance with **System / Light / Dark** at the bottom of the sidebar.
 
 ```bash
 # Add a transaction interactively
@@ -61,7 +63,10 @@ uv run expense-add
 # Print the latest summary
 uv run expense-analyze
 
-# Export a private local backup (output/ is ignored)
+# Import a CSV whose purchases are negative numbers (bank style)
+uv run expense-import --negative-expenses refund /path/to/transactions.csv
+
+# Export a private, dated local backup (output/ is ignored)
 uv run expense-export
 ```
 
@@ -104,19 +109,15 @@ uv run mypy
 uv run pytest
 ```
 
-The same commands run in CI on every push and pull request
-(`.github/workflows/checks.yml`).
-
-The browser-driven geometry checks are separate because they need Chromium and
-boot the real app:
+The web interface has its own checks:
 
 ```bash
-uv run pytest -m rendered
+npm --prefix web test        # parser and formatting unit tests
+npm --prefix web run build   # strict type check, then the production build
 ```
 
-They measure the rendered sidebar and the add-transaction form over the Chrome
-DevTools Protocol, so they catch layout regressions that reading `theme.css` as
-text cannot. `uv run pytest` deselects them.
+All of these run in CI on every push and pull request
+(`.github/workflows/checks.yml`).
 
 To have them applied automatically before each commit:
 

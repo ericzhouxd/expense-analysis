@@ -28,7 +28,7 @@ DEFAULT_PERSONAL_CATEGORIES = (
     "Medicine",
     "Church",
     "Tech",
-    "Stationary",
+    "Stationery",
 )
 DEFAULT_FIXED_CATEGORIES = (
     "Tuition",
@@ -109,10 +109,14 @@ class AppConfig:
         )
         if matched:
             return matched
-        searchable = f"{description} {merchant}".casefold()
-        for keyword, category in self.category_rules:
-            if keyword.casefold() in searchable and category in self.categories:
-                return category
+        from .models import keyword_matches  # models imports this module
+
+        # Longest keyword first, matching the entry form: "uber eats" beats "uber".
+        rules = sorted(self.category_rules, key=lambda rule: len(rule[0]), reverse=True)
+        for text in (description, merchant):
+            for keyword, category in rules:
+                if category in self.categories and keyword_matches(keyword, text):
+                    return category
         return "Uncategorized"
 
 

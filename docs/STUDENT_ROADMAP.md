@@ -2,13 +2,12 @@
 
 ## What exists now
 
-One local student installation, one active plan, a versioned UCLA undergraduate
-2026–27 estimate preset, and selectable 2024–25/2025–26/2026–27 UC entry cohorts.
-Housing, residency, actual bills, coverage, target and buffer belong to the private
-plan. The chosen reference is copied into it, so later published changes cannot
-silently change an existing budget. Transactions are never part of the preset.
+One local student installation with one set of budget settings: housing type, an
+optional own weekly amount and bills. The weekly line comes from a versioned UCLA
+undergraduate 2026–27 everyday estimate, and the weeks follow the UCLA Registrar's
+2025–26 and 2026–27 quarter dates. Transactions are never part of the preset.
 
-The UI uses UCLA defaults, but the reserve calculator does not import UCLA data.
+The UI uses UCLA defaults; the school-specific tables live only in `university_presets.py`.
 This is a useful separation, not a claim that the app already supports arbitrary
 universities, graduate programs, semester calendars, multiple users or accounts.
 

@@ -36,3 +36,11 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Web interface dependencies and build output (rebuilt with `npm --prefix web run build`).
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+
+# Local server logs.
+*.log

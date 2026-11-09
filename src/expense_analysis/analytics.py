@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import calendar
+import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
 
 from .config import AppConfig
+from .models import comparable_day
 
 TRANSACTION_COLUMNS = (
     "id",
@@ -162,17 +164,17 @@ def period_metrics(
     current = spending[spending["transaction_date"].between(month_start, cutoff)]["spending"].sum()
 
     previous_month_start = month_start - pd.offsets.MonthBegin(1)
-    previous_month_last = calendar.monthrange(
-        previous_month_start.year, previous_month_start.month
-    )[1]
-    previous_month_cutoff = previous_month_start.replace(day=min(days_elapsed, previous_month_last))
+    previous_month_cutoff = previous_month_start.replace(
+        day=comparable_day(as_of, previous_month_start.year, previous_month_start.month)
+    )
     previous = spending[
         spending["transaction_date"].between(previous_month_start, previous_month_cutoff)
     ]["spending"].sum()
 
     prior_year_start = month_start - pd.DateOffset(years=1)
-    prior_year_last = calendar.monthrange(prior_year_start.year, prior_year_start.month)[1]
-    prior_year_cutoff = prior_year_start.replace(day=min(days_elapsed, prior_year_last))
+    prior_year_cutoff = prior_year_start.replace(
+        day=comparable_day(as_of, prior_year_start.year, prior_year_start.month)
+    )
     previous_year = spending[
         spending["transaction_date"].between(prior_year_start, prior_year_cutoff)
     ]["spending"].sum()
@@ -202,8 +204,8 @@ def comparable_year_months(frame: pd.DataFrame) -> pd.DataFrame:
     return grouped.sort_values(["year", "month_number"])
 
 
-def academic_period_spending(frame: pd.DataFrame) -> pd.DataFrame:
-    spending = spending_frame(frame, personal_only=True)
+def academic_period_spending(frame: pd.DataFrame, *, personal_only: bool = True) -> pd.DataFrame:
+    spending = spending_frame(frame, personal_only=personal_only)
     if spending.empty:
         return pd.DataFrame(columns=["academic_period", "academic_year", "spending", "first_date"])
     return (
@@ -238,12 +240,17 @@ def spending_drivers(frame: pd.DataFrame, as_of: date | None = None) -> pd.DataF
     as_of = as_of or spending["transaction_date"].max().date()
     current_period = pd.Period(as_of, freq="M")
     previous_period = current_period - 1
-    grouped = (
-        spending[spending["month"].isin([current_period, previous_period])]
-        .groupby(["category", "month"])["spending"]
-        .sum()
-        .unstack(fill_value=0)
-    )
+    if not spending["month"].isin([previous_period]).any():
+        return pd.DataFrame(columns=["category", "current", "previous", "change", "percent_change"])
+    # The reporting month runs through as_of; the previous month through its
+    # comparable day, or in full when the reporting month is complete.
+    day = spending["transaction_date"].dt.day
+    previous_last = comparable_day(as_of, previous_period.year, previous_period.month)
+    spending = spending[
+        (spending["month"].isin([current_period]) & day.le(as_of.day))
+        | (spending["month"].isin([previous_period]) & day.le(previous_last))
+    ]
+    grouped = spending.groupby(["category", "month"])["spending"].sum().unstack(fill_value=0)
     for period in (current_period, previous_period):
         if period not in grouped.columns:
             grouped[period] = 0.0
@@ -263,7 +270,32 @@ def spending_drivers(frame: pd.DataFrame, as_of: date | None = None) -> pd.DataF
     return result.sort_values("change", ascending=False)
 
 
-def recurring_transactions(frame: pd.DataFrame) -> pd.DataFrame:
+# (label, shortest, longest) median gap in days for each recognised billing cycle.
+RECURRING_CYCLES = (
+    ("Weekly", 5, 10),
+    ("Biweekly", 11, 17),
+    ("Monthly", 20, 40),
+    ("Every 2 months", 55, 70),
+    ("Quarterly", 75, 105),
+    ("Yearly", 340, 390),
+)
+# Calendar cycles step by months so a charge on the 1st stays on the 1st.
+_CYCLE_MONTHS = {"Monthly": 1, "Every 2 months": 2, "Quarterly": 3, "Yearly": 12}
+
+
+def _merchant_key(value: str) -> str:
+    # Drop reference numbers and dates ("#48213", "05/2026") but keep short digits
+    # that are part of a name, such as "7-Eleven".
+    cleaned = re.sub(r"\d+/\d+(?:/\d+)?|#?\d{3,}", " ", value.casefold())
+    return " ".join(token for token in cleaned.split() if any(c.isalpha() for c in token))
+
+
+def recurring_transactions(frame: pd.DataFrame, as_of: date | None = None) -> pd.DataFrame:
+    """Charges with a stable amount and a recognised cycle.
+
+    ``status`` is "Possibly stopped" once a charge is more than half a cycle overdue
+    on ``as_of`` (default: the latest transaction date).
+    """
     expenses = spending_frame(frame)
     columns = [
         "merchant",
@@ -272,17 +304,18 @@ def recurring_transactions(frame: pd.DataFrame) -> pd.DataFrame:
         "average_amount",
         "median_interval_days",
         "last_seen",
+        "next_expected",
+        "status",
     ]
     if expenses.empty:
         return pd.DataFrame(columns=columns)
 
+    as_of = as_of or frame["transaction_date"].max().date()
     working = expenses[expenses["transaction_type"].eq("expense")].copy()
     merchant = working["merchant"].fillna("").astype(str).str.strip()
     description = working["description"].fillna("").astype(str)
     source = merchant.mask(merchant.eq(""), description)
-    working["merchant_key"] = (
-        source.str.casefold().str.replace(r"\d+", "", regex=True).str.split().str.join(" ")
-    )
+    working["merchant_key"] = source.map(_merchant_key)
     recurring: list[dict[str, object]] = []
     for key, group in working.groupby("merchant_key"):
         group = group.sort_values("transaction_date")
@@ -297,16 +330,20 @@ def recurring_transactions(frame: pd.DataFrame) -> pd.DataFrame:
         coefficient_of_variation = (
             float(group["amount"].std(ddof=0) / mean_amount) if mean_amount else 1
         )
-        if 5 <= median_interval <= 10:
-            frequency = "Weekly"
-        elif 20 <= median_interval <= 40:
-            frequency = "Monthly"
-        elif 75 <= median_interval <= 105:
-            frequency = "Quarterly"
-        else:
+        frequency = next(
+            (label for label, low, high in RECURRING_CYCLES if low <= median_interval <= high),
+            None,
+        )
+        if frequency is None or coefficient_of_variation > 0.2:
             continue
-        if coefficient_of_variation > 0.2:
-            continue
+        last_seen = group["transaction_date"].max().date()
+        months = _CYCLE_MONTHS.get(frequency)
+        next_expected = (
+            (pd.Timestamp(last_seen) + pd.DateOffset(months=months)).date()
+            if months
+            else last_seen + timedelta(days=round(median_interval))
+        )
+        overdue = (as_of - next_expected).days
         recurring.append(
             {
                 "merchant": str(key).title(),
@@ -314,7 +351,9 @@ def recurring_transactions(frame: pd.DataFrame) -> pd.DataFrame:
                 "occurrences": len(group),
                 "average_amount": mean_amount,
                 "median_interval_days": median_interval,
-                "last_seen": group["transaction_date"].max().date(),
+                "last_seen": last_seen,
+                "next_expected": next_expected,
+                "status": "Possibly stopped" if overdue > median_interval / 2 else "Active",
             }
         )
     return pd.DataFrame(recurring, columns=columns).sort_values("average_amount", ascending=False)

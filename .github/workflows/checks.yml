@@ -40,27 +40,30 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
-  rendered:
-    name: rendered geometry
+  web:
+    name: web interface (types, tests, build)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      # Vite 7 needs Node.js 20.19 or newer; pin a current LTS instead of relying
+      # on whatever the runner image ships.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          enable-cache: true
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies from the lockfile
-        run: uv sync --locked --all-groups
+        run: npm ci
 
-      # The runner image ships Google Chrome. Naming it through EXPECT_CHROMIUM
-      # makes a missing browser fail this job instead of skipping every check.
-      - name: Confirm the browser is available
-        run: google-chrome --version
+      - name: Unit tests
+        run: npm test
 
-      - name: Measure the rendered pages
-        run: uv run pytest -m rendered
-        env:
-          EXPECT_CHROMIUM: google-chrome
+      - name: Type check and build
+        run: npm run build

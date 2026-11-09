@@ -12,106 +12,124 @@ The project uses a uv-managed CPython 3.12 runtime:
 Use `uv run` for every project command. Do not install dependencies into the
 global Python or pyenv environment.
 
-## Architecture
+## Web interface
+
+The interface is a FastAPI server plus a React single-page app over the Python
+modules described under Architecture.
 
 ```text
-app.py
-  └── expense_analysis.ui
-        ├── expense_analysis.database
-        ├── expense_analysis.import_export
-        ├── expense_analysis.analytics
-        ├── expense_analysis.models
-        └── expense_analysis.config
+web/ (React 19 + TypeScript + Vite)        src/expense_analysis/server/
+  src/lib/      parser, formatting           app.py    routes, security middleware
+  src/components/ instrument panel parts     views.py  JSON payload builders (cents)
+  src/pages/    one module per page          main.py   `expense-app` entry point
+        │  fetch /api/* (JSON, integer cents)        │
+        └──────────────────────────────────────────▶ database / analytics / term_budget
 ```
 
-- `app.py` is the Streamlit entry point.
-- `ui/` holds the pages. `ui/__init__.py` keeps `render_app` beside the
-  `_database` and `load_config` names it reads, so tests can replace either
-  through the package; `ui/theme.py` holds the palette, `ui/widgets.py` the
-  presentational helpers, `ui/state.py` the activity filters and small data
-  lookups, and one module per page. Only the `ui/` modules import Streamlit for
-  layout.
+- `server/views.py` turns database rows into plain JSON payloads. Money is always
+  integer cents; dates are ISO strings. It holds no HTTP code, so tests call it
+  directly or through `TestClient`.
+- `server/app.py` exposes `create_app(database, config_loader, today, dist_dir,
+  fonts_dir)`. Every argument is injectable, so tests use a temporary SQLite file,
+  default config, and a fixed date.
+- `web/src/lib/quickParse.ts` parses one-line quick entries in the browser on every
+  keystroke. The server still validates and categorizes on save; `keyword.ts`
+  mirrors `categories.keyword_matches` so live suggestions agree with the server.
+- The UI never computes budget figures. It renders what `/api/overview`,
+  `/api/budget`, and `/api/insights` return.
+
+### Security model
+
+- uvicorn binds to `127.0.0.1` only. A middleware also rejects any `Host` header
+  other than `127.0.0.1`, `localhost`, or `[::1]`, which blocks DNS-rebinding pages.
+- Every non-GET `/api/*` request must carry `X-Jizhang: 1`. Browsers cannot send a
+  custom header cross-site without a CORS preflight, and the server allows no CORS,
+  so other websites cannot write to the ledger.
+- Responses carry a strict Content-Security-Policy (self only, no inline scripts),
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and API
+  responses are `Cache-Control: no-store`.
+- React escapes every rendered string. Do not use `dangerouslySetInnerHTML`.
+- Fonts come from `static/fonts` and `@fontsource/doto`; there are no remote
+  requests at runtime.
+
+### Working on the interface
+
+```bash
+uv run expense-app --no-browser     # API on 127.0.0.1:8765
+npm --prefix web run dev            # Vite on 127.0.0.1:5173, proxies /api to 8765
+```
+
+`web/dist/` and `web/node_modules/` are ignored. `expense-app` serves a short
+"build the interface first" page when `web/dist/` is missing.
+
+Design rules for the web interface:
+
+- Square corners everywhere (`border-radius: 0`); only LEDs and dots are round.
+- The glass panel (`Housing`) tracks the pointer for glare and a slight tilt;
+  `prefers-reduced-motion` turns off tilt, rolling digits, the ticker, and flaps.
+- Changing numbers roll (`Odometer`), meters fill segment by segment
+  (`PaceMeter`), and month labels flip like a departures board (`SplitFlap`).
+- Every page needs a deliberate empty state and must work at 390px wide.
+
+## Architecture
+```text
+web/ (React)  ──/api/*──▶  server/app.py
+                              ├── server/views.py
+                              ├── database.py, transaction_edits.py
+                              ├── import_export.py, categories.py, choices.py
+                              ├── analytics.py, spending_summary.py
+                              ├── term_budget.py, spending_treatment.py
+                              └── models.py, config.py
+cli.py ───────────────────────┘ (same modules, no server)
+```
+
+- `server/` is the only HTTP layer. Calculation and validation stay in the
+  modules below it so the CLI, the server and the tests share one implementation.
 - `database.py` owns SQLite schema creation and persistence.
-- `transaction_edits.py` validates table edits and saves reviewed batches in one
-  SQLite transaction, checking duplicates and changes since the editor snapshot.
+- `transaction_edits.py` saves a batch of edits in one SQLite transaction,
+  rejecting stale rows (changed since the client loaded them) and duplicates.
 - `models.py` validates dates, amounts, transaction types, IDs, and fingerprints.
 - `import_export.py` previews and normalizes CSV data. `decode_csv` accepts
   UTF-8 (with or without BOM), UTF-16, cp1252, and latin-1, since spreadsheet
   exports use all four; anything containing NUL bytes is rejected as
   `CsvDecodeError` rather than parsed as a one-column CSV.
+- `categories.py` holds keyword rules and category suggestions; `choices.py`
+  shares configured and saved vocabulary (categories, accounts, payment methods)
+  and rechecks usage on the server before removing one.
 - `analytics.py` converts database rows into Pandas frames and calculates insights.
 - `config.py` loads safe defaults and the ignored local `config.toml`.
 - `university_presets.py` holds public, dated UCLA reference estimates only.
-- `spending_plan.py` validates private plans and calculates bill reserves and rollover
-  in integer cents, independent of Streamlit and UCLA-specific tables.
-- `budget_ui.py` handles plan setup, monthly/quarterly views and payment allocations.
-- `presentation.py` renders escaped, data-independent visual components and loads
-  the shared theme from `assets/theme.css`.
+- `university_presets.py` also holds the UCLA quarter dates (`UCLA_QUARTERS`), copied
+  from the Registrar's annual calendar with the date they were checked.
+- `term_budget.py` validates budget settings and builds the weekly budget: the
+  school periods (quarters, breaks, summer), the weekly line, per-week spent and
+  saved, bills and big purchases, all in integer cents.
 
 ## Theme and local assets
+Fonts are Departure Mono (interface), Doto (LED numerals, from `@fontsource/doto`)
+and a two-character Noto Sans TC subset (記帳 wordmark). Departure Mono and the
+wordmark live in `static/fonts/` with their OFL licenses; the server mounts that
+directory at `/fonts`. **Never place databases, CSVs, configuration, or exports in
+`static/`.** Keep private data in the existing ignored directories.
 
-Streamlit 1.60+ is required for paired native theme configuration and the trusted
-static theme bridge. `.streamlit/config.toml` defines native Light/Dark colors,
-square controls, a 14px base size, and locally hosted font faces. Users choose System,
-Light, or Dark from the sidebar Appearance control; the built-in top-right menu stays
-hidden.
-
-`assets/theme_bridge.html` observes the native app background and updates a single
-theme attribute for custom CSS panels. The sidebar Appearance control selects the same
-native System/Light/Dark themes as Streamlit's built-in switcher, so it does not create
-a second theme state. The bridge also makes Plotly charts keyboard-focusable and
-toggles their local fullscreen class. It runs only bundled static JavaScript: never
-interpolate transaction content, read storage, or issue network requests. It disconnects
-its previous observers and listeners on reruns. Plotly uses transparent surfaces and
-inherits the native theme's text colors.
-
-`assets/choice_bridge.html` confirms creation in native React Aria single selects,
-Base Web multiselects, and Glide table choice editors. It reads the active input
-locally and renders prompt text with `textContent`; it never sends or stores input.
-Window capture listeners run before form Enter navigation, and are cleaned up on
-reruns. Check Enter, Escape, mouse selection, partial matches, and both themes after
-Streamlit upgrades. `choices.py` shares configured and saved vocabulary. Editable
-table fields use creatable multiselect columns; transaction validation enforces one
-value per field, while budget bills may map multiple categories. Calculation enums
-(transaction type, billing cycle, and reference presets) keep fixed choices.
-
-`assets/date_bridge.html` adds a themed, keyboard-accessible calendar companion to the Add dialog's
-text date field. Calendar selections dispatch normal input events. Typed dates
-receive immediate local validation and automatic year-month-day separators; the
-server still validates every save. The bridge handles
-input/change events and keyboard activation, disconnects on reruns, and uses no
-network or storage. Date bounds must stay aligned with `models.py`. The table's
-Date column uses ISO text so editing never switches to a browser locale's date order.
-
-The three families are Departure Mono (UI), Anton (condensed amounts), and a
-two-character Noto Sans TC subset (記帳 wordmark). Fonts and their OFL licenses live
-in `static/fonts/`. Static serving is enabled only for public visual assets:
-**never place databases, CSVs, configuration, or exports in `static/`.** Keep
-private data in the existing ignored directories. CSS generates the brushed metal
-and halftone; the small chrome ornament is inline SVG, not an external image.
-
-Check theme switching without a Python rerun, mobile stacking, large/negative
-amounts, and the data editor whenever changing presentation. Custom HTML must use
-`st.html`, with all dynamic text escaped, to avoid Markdown code-block regressions.
-
-The analytics and storage layers do not depend on Streamlit.
+Colors are CSS custom properties at the top of `web/src/styles.css`. The glass,
+dot-screen, scanline and bevel effects are CSS only; there are no image assets.
 
 ## Data flow
-
 ```text
-Manual entry or CSV
+Quick add, row edit or CSV
         ↓
-TransactionDraft validation
+TransactionDraft validation (server)
         ↓
 Fingerprint duplicate check
         ↓
 SQLite transaction
         ↓
-Pandas derived columns
+Pandas derived columns, spending summary, term budget
         ↓
-Metrics and Plotly figures
+JSON in integer cents (server/views.py)
         ↓
-Streamlit pages
+React pages
 ```
 
 Money is stored as positive integer cents. `transaction_type` determines the
@@ -131,24 +149,40 @@ direction used in spending and cash-flow calculations.
 
 Schema version 2 adds `spending_plans` with one active local row (`id = 1`), a
 validated versioned JSON payload and an update timestamp. Initialization is
-additive and does not downgrade a newer schema version. The payload contains the
-reference snapshot, custom target, bill coverage/category rules, buffer and
-transaction-ID-to-budget-month overrides. Save validates before writing and is
-atomic. No real student profile is included in source control.
+additive and does not downgrade a newer schema version. Save validates before
+writing and is atomic. No real student profile is included in source control.
 
 Schema version 3 drops the legacy `budgets` table. Its monthly category rows were
 superseded by `spending_plans`, so nothing had read or written the table since;
 `initialize` removes it from databases created under schema 2. Transactions and
-saved plans are untouched by that migration.
+saved settings are untouched by that migration.
 
-Reserve accounting uses `max(planned, expense − refunds)` per bill cycle. This
-amount is allocated across its coverage with integer remainder distribution.
-Actual paid plus remaining reserve equals the effective committed cost. Every
-expense/refund is matched at most once; overlapping category/coverage rules are
-rejected, and all unmatched expenses count as flexible. Targets are allocated to
-the first nine months, with separate summer funding for the last three. The buffer
-is spread over the whole plan. Flexible allowance is smoothed within each quarter.
-Monthly remaining is cumulative within a quarter, not additive across months.
+The `spending_plans` row now holds `BudgetSettings` (payload `schema_version` 3):
+housing type, an optional own weekly amount in cents and the bills (name, amount,
+categories, cadence `Monthly` / `Each quarter` / `Once`, due day or date). Older
+plan payloads (versions 1 and 2) load through `_from_legacy_plan`: Commitments
+bills are kept (Quarterly → Each quarter, Coverage total → Once on the first
+coverage month) and the housing benchmark carries over. Targets, buffers,
+irregular reserves and payment-month overrides are dropped; nothing is written
+until the user saves.
+
+Budget calculation (`term_budget.py`):
+
+- The weekly line is the user's amount, or UCLA's everyday estimate (Food +
+  Transportation + Personal for the housing type) divided by `school_weeks()`,
+  the Monday-aligned weeks from the start of fall quarter to the end of spring.
+- A quarter runs from the Monday of the week the quarter begins to the Sunday
+  after it ends. Week 1 starts on the instruction date if it is a Monday,
+  otherwise the following Monday; earlier days are Week 0. From the Monday of
+  finals the label is Finals week. Gaps between quarters are Winter break,
+  Spring break and Summer. Dates outside the stored calendar use calendar months.
+- Each Mon–Sun week is compared with the line independently. Finished weeks
+  report `saved = line − net everyday spent`, which can be negative. Nothing
+  rolls over into the next week.
+- A bill counts as paid once net Bills spending in its categories reaches its
+  amount: within the due date's calendar month for Monthly bills, within 30 days
+  either side of the due date otherwise. It is `soon` within 7 days of its due
+  date and `late` after it while unpaid.
 
 The published UCLA off-campus totals exceed their displayed component sum by $1.
 The reference includes an explicit $1 reconciliation line instead of silently
@@ -159,41 +193,27 @@ Schema initialization is idempotent. Connections enable foreign keys and WAL
 journaling.
 
 ## UI conventions
-
-The interface balances a sharp editorial grid with early-web character:
-
-- Off-white or near-black canvas with acid-lime accents
-- Square panels, compact typography, brushed-metal bars, and dotted balances
-- Three locally hosted font families; no decorative slogans or campus photography
-- One primary visual message per section
-- Advanced comparisons hidden behind progressive disclosure
-- List view for reading and data editor for bulk changes
-
-Color roles are shared across native controls and custom panels. Lime marks the
-active navigation, primary actions, and featured amounts. Sage indicates positive
-status; amber indicates caution; coral indicates an overage or error. Ordinary
-notices use a subdued neutral green-gray. Summary amounts stay neutral unless
-their status calls for emphasis. Keep row dividers quieter than control borders,
-and place status badges on a panel-colored background for legibility over lime.
-
-`tests/test_theme_colors.py` checks text and chart palette contrast in both themes.
-`tests/test_theme_audit.py` checks rendered text across all six pages using a
-temporary synthetic ledger and saved budget. Run it with `uv run pytest -m rendered
-tests/test_theme_audit.py`; optionally set `THEME_AUDIT_SCREENSHOTS` to a temporary
-directory to capture page screenshots. The browser fixtures use default config
-and never load the private `config.toml`.
-
-Custom visual fragments must be rendered with `st.html()`. Do not pass indented
-HTML through `st.markdown()`: Markdown may display it as a code block. Use
-`st.markdown()` only for genuine Markdown content.
-
-Any user-supplied value included in HTML must go through `_safe_inline()` or
-`html.escape()`. Never interpolate raw transaction data into markup.
+- Dark instrument panel: near-black housing, amber/lime LED readouts, square corners.
+- One primary number per page (the `HeroNumber` in the glass `Housing`).
+- Color roles: lime for primary actions and healthy pace, amber for caution, coral
+  for overage or errors, sage for positive status. Category colors come from
+  `web/src/lib/glyphs.ts`.
+- Advanced detail goes behind `Collapsible` sections.
+- Render user text as React children only; never build HTML strings.
 
 ## Adding analytics
 
 Add pure calculation functions to `analytics.py` and test them with synthetic
 frames. UI code should format results but should not duplicate business logic.
+
+Month-over-month and year-over-year windows use `models.comparable_day`: a partial
+month compares the same days (clamped to a shorter month), and a complete month
+compares with the other month in full. Format money for display with
+`models.format_dollars` (U+2212 minus; `signed=True` for deltas).
+
+Category keyword rules use `models.keyword_matches` (ASCII word edges plus plural
+endings; other scripts match as substrings). `web/src/lib/keyword.ts` mirrors it
+as `keywordMatches`, so change both together.
 
 Analytics must:
 
@@ -205,7 +225,6 @@ Analytics must:
 - Avoid silently classifying unknown categories as personal spending
 
 ## Verification
-
 Run:
 
 ```bash
@@ -214,49 +233,17 @@ uv run ruff format --check .
 uv run ruff check .
 uv run mypy
 uv run pytest
-```
-
-The rendered-page audit uses Streamlit’s `AppTest`:
-
-```bash
-uv run python -c '
-from streamlit.testing.v1 import AppTest
-app = AppTest.from_file("app.py").run(timeout=30)
-for page in [
-    "Overview",
-    "Transactions",
-    "Import / Export",
-    "Budgets",
-    "Advanced insights",
-    "Settings",
-]:
-    app.sidebar.radio[0].set_value(page).run(timeout=30)
-    assert not app.exception, (page, app.exception)
-'
+npm --prefix web test
+npm --prefix web run build
 ```
 
 Tests must use synthetic data and temporary databases. They must never read or
-copy the real database.
-
-`tests/test_rendered_geometry.py` goes further: it boots the real app against a
-throwaway directory (`EXPENSE_ANALYSIS_DATA_DIR` / `EXPENSE_ANALYSIS_OUTPUT_DIR`)
-and measures the live DOM with a headless Chromium over the Chrome DevTools
-Protocol. It needs Chromium, so `uv run pytest` deselects it:
-
-```bash
-uv run pytest -m rendered
-```
-
-Use it for anything the browser has to decide — box sizes, focus rings, the
-sidebar grid — because the substring checks against `theme.css` in
-`test_presentation.py` cannot see any of that. Two sidebar bugs shipped past
-those checks; both now fail here instead.
-
-The automated all-pages regression in `test_spending_plan.py` injects a temporary
-database and default config. Prefer that test over the manual audit above, which
-opens the locally configured database. The suite covers setup confirmation,
-persistence, cohort totals, reserves, refunds, overages, payment-date overrides,
-summer, cent rounding, invalid coverage and quarter rollover.
+copy the real database. `tests/test_server.py` drives the API through
+`TestClient` with a temporary SQLite file, default config and a fixed date,
+covering the security headers, quick add, edits, import, budgets and settings.
+`test_term_budget.py` covers the UCLA calendar (Week 0, finals week, breaks,
+fallback months), the weekly line, fresh weeks and saved amounts, bills and big
+purchases, past terms, validation and legacy payload conversion.
 
 ## Student product roadmap
 
@@ -269,7 +256,23 @@ the current global cached database as a shared multi-user service.
 1. Confirm `data/`, `output/`, `.venv/`, `.uv-cache/`, and root `config.toml` are
    ignored.
 2. Review `git status --ignored`.
-3. Confirm `.streamlit/config.toml` is tracked; it enforces localhost and disables
-   telemetry.
-4. Search commit candidates for account names, secrets, or transaction details.
-5. Run the complete verification suite.
+3. Search commit candidates for account names, secrets, or transaction details.
+4. Run the complete verification suite.
+
+## Spending treatments
+
+`spending_treatment.py` supplies shared classification for budgets, historical
+analytics, and the CLI. Category defaults and transaction exceptions are stored
+under `spending_rules` in the existing local `category_settings` JSON; category
+renames migrate those defaults atomically. Exceptions take priority over category
+defaults, which take priority over plan category mappings. Unreviewed categories
+consume everyday allowance conservatively and carry an explicit review flag.
+
+Bill categories default to Commitments (shown as **Bills**); `Irregular` is shown
+as **Big stuff**. Only Everyday spending is compared with the weekly line. Legacy
+`reserve` keys in saved rules are ignored. Transfers and income never count.
+
+Removing a category, account or payment method goes through `delete_choice`,
+which rechecks references on the server. Unused choices are removed immediately
+with an Undo (`restore_choice`); used ones need a replacement, and the client
+only receives a short preview of the affected transactions.

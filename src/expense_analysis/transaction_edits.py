@@ -3,12 +3,9 @@
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import date
-from decimal import InvalidOperation
-
-import pandas as pd
 
 from .database import Database, DuplicateTransactionError
-from .models import TransactionDraft, parse_amount_cents, parse_date
+from .models import TransactionDraft
 
 
 @dataclass(frozen=True)
@@ -16,63 +13,6 @@ class TransactionChange:
     transaction_id: str
     before: TransactionDraft
     after: TransactionDraft | None
-
-
-def draft_from_editor(row: pd.Series) -> TransactionDraft:
-    def text(column: str, required: bool = False) -> str:
-        raw = row[column]
-        if isinstance(raw, list):
-            if len(raw) > 1:
-                raise ValueError(f"Choose only one {column.lower()}; remove the previous choice")
-            raw = raw[0] if raw else ""
-        value = "" if pd.isna(raw) else str(raw).strip()
-        if required and not value:
-            raise ValueError(f"{column} is required")
-        return value
-
-    raw_date = row["Date"]
-    if pd.isna(raw_date) or (isinstance(raw_date, str) and not raw_date.strip()):
-        raise ValueError("Date is required")
-    try:
-        transaction_date = parse_date(raw_date)
-    except ValueError as exc:
-        raise ValueError(str(exc)) from exc
-    try:
-        amount = parse_amount_cents(row["Amount"])
-    except (ValueError, OverflowError, InvalidOperation) as exc:
-        raise ValueError("Amount must be a finite positive number") from exc
-    return TransactionDraft(
-        transaction_date=transaction_date,
-        description=text("Description", required=True),
-        amount_cents=amount,
-        category=text("Category", required=True),
-        account=text("Account"),
-        payment_method=text("Payment method"),
-        merchant=text("Merchant"),
-        transaction_type=text("Type", required=True),
-        notes=text("Notes"),
-    ).validated()
-
-
-def collect_changes(original: pd.DataFrame, edited: pd.DataFrame) -> list[TransactionChange]:
-    if edited["ID"].duplicated().any() or set(original["ID"]) != set(edited["ID"]):
-        raise ValueError("The table records changed. Discard edits and reload the table.")
-    baseline = original.set_index("ID")
-    changes = []
-    for row_number, (_, row) in enumerate(edited.iterrows(), start=1):
-        before_row = baseline.loc[row["ID"]]
-        if not row["Delete"] and row.drop(labels=["ID", "Delete"]).equals(
-            before_row.drop(labels="Delete")
-        ):
-            continue
-        try:
-            before = draft_from_editor(before_row)
-            after = None if row["Delete"] else draft_from_editor(row)
-        except ValueError as exc:
-            raise ValueError(f"Row {row_number}: {exc}") from exc
-        if before != after:
-            changes.append(TransactionChange(str(row["ID"]), before, after))
-    return changes
 
 
 def apply_changes(database: Database, changes: list[TransactionChange]) -> None:

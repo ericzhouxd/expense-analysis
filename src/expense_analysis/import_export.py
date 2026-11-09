@@ -47,14 +47,32 @@ class ImportPreview:
         return sum(row.duplicate for row in self.rows)
 
 
-def _normalize_row(row: dict[str, str]) -> dict[str, str]:
-    return {key.casefold().strip(): (value or "").strip() for key, value in row.items()}
+# Explicit Type values win; these apply only when a row has no Type.
+SIGN_CONVENTIONS = {
+    "positive_expense": ("expense", "refund"),
+    "negative_expense_refund": ("refund", "expense"),
+    "negative_expense_income": ("income", "expense"),
+}
+_EXTRA_FIELDS = "__extra_fields__"
+
+
+def header_key(name: str) -> str:
+    """Match headers loosely: "Payment Method", "payment-method" and "payment_method"."""
+    return "_".join(name.casefold().replace("-", " ").replace("_", " ").split())
+
+
+def _normalize_row(row: dict[str | None, Any]) -> dict[str, str]:
+    return {
+        header_key(key): (value or "").strip()
+        for key, value in row.items()
+        if isinstance(key, str) and isinstance(value, str | None)
+    }
 
 
 def _value(normalized: dict[str, str], *names: str) -> str:
     for name in names:
-        if name.casefold() in normalized:
-            return normalized[name.casefold()]
+        if header_key(name) in normalized:
+            return normalized[header_key(name)]
     return ""
 
 
@@ -94,9 +112,16 @@ def preview_csv(
     existing_fingerprints: set[str] | None = None,
     category_mapping: dict[str, str] | None = None,
     merchant_suggestions: dict[str, str] | None = None,
+    sign_convention: str = "positive_expense",
 ) -> ImportPreview:
+    """Validate every row without saving.
+
+    ``sign_convention`` sets the type of rows without a Type column: by default a
+    negative amount is a refund; bank exports often sign purchases negative instead.
+    """
+    positive_type, negative_type = SIGN_CONVENTIONS[sign_convention]
     text = decode_csv(content)
-    reader = csv.DictReader(io.StringIO(text))
+    reader = csv.DictReader(io.StringIO(text), restkey=_EXTRA_FIELDS)
     if not reader.fieldnames:
         return ImportPreview((ImportRow(1, None, ("CSV header is missing",)),))
 
@@ -110,6 +135,8 @@ def preview_csv(
         description = _value(normalized, "description", "expense")
         if description.startswith("---"):
             continue
+        if any(str(value).strip() for value in row.get(_EXTRA_FIELDS) or []):
+            errors.append("Row has more values than the header. Quote fields that contain commas.")
         if not description:
             errors.append("Description is required")
 
@@ -129,7 +156,7 @@ def preview_csv(
 
         transaction_type = _value(normalized, "type", "transaction_type").casefold()
         if not transaction_type:
-            transaction_type = "refund" if signed_cents < 0 else "expense"
+            transaction_type = negative_type if signed_cents < 0 else positive_type
 
         original_category = _value(normalized, "category")
         notes = _value(normalized, "notes")
@@ -210,4 +237,5 @@ def export_csv(rows: list[dict[str, Any]]) -> bytes:
                 "Notes": row["notes"],
             }
         )
-    return output.getvalue().encode("utf-8")
+    # The BOM lets Excel detect UTF-8, so names like 記帳 or Café survive a double-click.
+    return output.getvalue().encode("utf-8-sig")

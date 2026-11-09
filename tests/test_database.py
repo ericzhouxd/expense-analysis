@@ -84,3 +84,20 @@ def test_transaction_search(database, draft):
     database.add_transaction(draft)
     assert len(database.list_transactions(search="grocer")) == 1
     assert database.list_transactions(search="airfare") == []
+
+
+def test_search_escapes_wildcards_and_matches_amounts_and_accounts(database):
+    for description, cents, account in (
+        ("Tip 15% extra", 1299, "Checking"),
+        ("Plain", 500, "Travel card"),
+        ("snake_case shop", 700, "Checking"),
+    ):
+        database.add_transaction(
+            TransactionDraft(date(2026, 7, 1), description, cents, "Food", account=account)
+        )
+    assert [r["description"] for r in database.list_transactions(search="15%")] == ["Tip 15% extra"]
+    assert [r["description"] for r in database.list_transactions(search="_")] == ["snake_case shop"]
+    assert [r["description"] for r in database.list_transactions(search="12.99")] == [
+        "Tip 15% extra"
+    ]
+    assert [r["description"] for r in database.list_transactions(search="travel")] == ["Plain"]

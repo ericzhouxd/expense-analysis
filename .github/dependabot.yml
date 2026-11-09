@@ -12,8 +12,19 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
-  # No workflows are tracked yet; this entry keeps action bumps working as soon
-  # as CI lands instead of requiring a second config change.
+  # web/package-lock.json is the resolved set for the React interface.
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      web-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Pinned action SHAs in .github/workflows/checks.yml.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

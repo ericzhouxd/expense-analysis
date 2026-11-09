@@ -13,7 +13,7 @@ from expense_analysis.config import AppConfig
 from expense_analysis.database import Database
 from expense_analysis.import_export import preview_csv
 from expense_analysis.models import TransactionDraft
-from expense_analysis.spending_plan import Commitment, SpendingPlan
+from expense_analysis.term_budget import Bill, BudgetSettings
 
 
 @pytest.fixture
@@ -23,21 +23,11 @@ def database(tmp_path):
     return database
 
 
-def test_rename_updates_history_fingerprint_plan_and_import_alias(database):
+def test_rename_updates_history_fingerprint_bills_and_import_alias(database):
     config = AppConfig()
     draft = TransactionDraft(date(2026, 10, 2), "Synthetic", 1200, "Food")
     identifier = database.add_transaction(draft)
-    plan = SpendingPlan(
-        "Test",
-        date(2026, 10, 1),
-        9,
-        90000,
-        0,
-        0,
-        (Commitment("Food reserve", 1000, ("Food",)),),
-        {},
-    )
-    database.save_spending_plan(plan)
+    database.save_budget_settings(BudgetSettings(bills=(Bill("Food bill", 1000, ("Food",)),)))
     assert (
         save_category(database, config, "Everyday", "Personal", source="Food", keyword="groceries")
         == 1
@@ -45,7 +35,7 @@ def test_rename_updates_history_fingerprint_plan_and_import_alias(database):
     saved = database.get_transaction(identifier)
     assert saved["category"] == "Everyday"
     assert saved["fingerprint"] == replace(draft, category="Everyday").fingerprint
-    assert database.get_spending_plan().commitments[0].categories == ("Everyday",)
+    assert database.get_budget_settings().bills[0].categories == ("Everyday",)
     updated = effective_config(database, config)
     assert "Food" not in updated.categories
     assert updated.category_for("", provided="Food") == "Everyday"
@@ -57,21 +47,12 @@ def test_rename_updates_history_fingerprint_plan_and_import_alias(database):
 def test_conflicting_budget_merge_rolls_back_everything(database):
     config = AppConfig()
     database.add_transaction(TransactionDraft(date(2026, 10, 2), "Synthetic", 1000, "Food"))
-    plan = SpendingPlan(
-        "Test",
-        date(2026, 10, 1),
-        9,
-        90000,
-        0,
-        0,
-        (Commitment("Food", 1000, ("Food",)), Commitment("Rent", 2000, ("Rent",))),
-        {},
-    )
-    database.save_spending_plan(plan)
-    with pytest.raises(ValueError, match="overlapping"):
+    budget = BudgetSettings(bills=(Bill("Food", 1000, ("Food",)), Bill("Rent", 2000, ("Rent",))))
+    database.save_budget_settings(budget)
+    with pytest.raises(ValueError, match="two bills"):
         save_category(database, config, "Rent", "Fixed", source="Food")
     assert database.list_transactions()[0]["category"] == "Food"
-    assert database.get_spending_plan() == plan
+    assert database.get_budget_settings() == budget
     assert not preferences(database)["aliases"]
 
 
@@ -122,3 +103,19 @@ def test_save_time_suggestion_matches_live_priority(database):
     assert suggested_category(database, config, "Coffee beans", "Coffee shop") == "Food"
     assert suggested_category(database, config, "coffee", "") == "Dining Out"
     assert suggested_category(database, config, "unmatched synthetic", "") == "Uncategorized"
+
+
+def test_keyword_rules_can_be_listed_removed_and_restored(database):
+    from expense_analysis.categories import delete_keyword_rules, keyword_rules
+
+    config = AppConfig(category_rules=(("cafe", "Dining Out"),))
+    save_category(database, config, "Hobbies", "Personal", keyword="Craft")
+    listed = {(r["keyword"], r["source"]) for r in keyword_rules(database, config)}
+    assert listed == {("cafe", "config.toml"), ("craft", "Settings")}
+    delete_keyword_rules(database, ["cafe", "craft"])
+    updated = effective_config(database, config)
+    assert updated.category_for("Campus cafe") == "Uncategorized"
+    assert updated.category_for("craft paper") == "Uncategorized"
+    assert keyword_rules(database, config) == []
+    save_category(database, config, "Hobbies", "Personal", source="Hobbies", keyword="craft")
+    assert effective_config(database, config).category_for("craft paper") == "Hobbies"
