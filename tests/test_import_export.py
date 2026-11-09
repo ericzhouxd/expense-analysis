@@ -144,3 +144,57 @@ def test_import_ignores_merchant_suggestions_outside_the_vocabulary():
     draft = preview.valid_drafts[0]
     assert draft.category == "Uncategorized"
     assert "Imported category: Surprise" in draft.notes
+
+
+def test_exported_backup_reimports_as_duplicates_with_every_field():
+    rows = [
+        {
+            "id": "synthetic",
+            "transaction_date": "2026-07-30",
+            "description": "Synthetic coffee",
+            "amount_cents": 450,
+            "category": "Dining Out",
+            "account": "Checking",
+            "payment_method": "Apple Pay",
+            "merchant": "Cafe",
+            "transaction_type": "expense",
+            "notes": "記帳 note",
+        }
+    ]
+    exported = export_csv(rows)
+    assert exported.startswith(b"\xef\xbb\xbf")  # Excel detects UTF-8 from the BOM.
+    first = preview_csv(exported, AppConfig())
+    draft = first.valid_drafts[0]
+    assert (draft.payment_method, draft.notes) == ("Apple Pay", "記帳 note")
+    again = preview_csv(exported, AppConfig(), {draft.fingerprint})
+    assert again.duplicate_count == 1 and not again.valid_drafts
+
+
+def test_row_with_unquoted_comma_is_invalid_instead_of_crashing():
+    preview = preview_csv(
+        b"Date,Description,Amount\n2026-03-01,Lunch, tacos,12.50\n2026-03-02,Bus,2.75\n",
+        AppConfig(),
+    )
+    assert preview.invalid_count == 1
+    assert "more values than the header" in "; ".join(preview.rows[0].errors)
+    assert [d.description for d in preview.valid_drafts] == ["Bus"]
+
+
+@pytest.mark.parametrize(
+    ("convention", "negative", "positive"),
+    [
+        ("positive_expense", "refund", "expense"),
+        ("negative_expense_refund", "expense", "refund"),
+        ("negative_expense_income", "expense", "income"),
+    ],
+)
+def test_sign_convention_sets_untyped_rows_only(convention, negative, positive):
+    content = (
+        b"Date,Description,Amount,Type\n"
+        b"2026-03-01,Card purchase,-20.00,\n"
+        b"2026-03-02,Credit,15.00,\n"
+        b"2026-03-03,Explicit,-5.00,transfer\n"
+    )
+    drafts = preview_csv(content, AppConfig(), sign_convention=convention).valid_drafts
+    assert [d.transaction_type for d in drafts] == [negative, positive, "transfer"]
+    assert all(d.amount_cents > 0 for d in drafts)

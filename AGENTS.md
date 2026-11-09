@@ -31,9 +31,11 @@ uv run pytest
 
 ## Project conventions
 
-- Keep calculation and validation logic out of Streamlit UI code when possible.
+- Keep calculation and validation logic in the Python modules, not in `server/` routes or
+  the React app (`web/`).
 - Store money as positive integer cents and use `transaction_type` for direction.
 - Treat refunds separately from expenses and exclude transfers from spending and cash flow.
-- Escape every user-supplied value rendered in custom HTML.
+- Render user-supplied text as React children; never build HTML strings or use
+  `dangerouslySetInnerHTML`.
 - Preserve predictable empty-state behavior and avoid division by zero.
 - Follow the architecture, UI, SQLite, and privacy guidance in `docs/DEVELOPMENT.md`.

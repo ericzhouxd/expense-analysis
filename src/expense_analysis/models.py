@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import hashlib
 import re
 import uuid
@@ -53,6 +54,19 @@ def validate_transaction_date(value: date | datetime | str, *, today: date | Non
     return parsed
 
 
+def comparable_day(as_of: date, year: int, month: int) -> int:
+    """Last day of ``year-month`` to compare with the period ending ``as_of``.
+
+    A partial month compares the same days (clamped to a shorter month). A complete
+    month, where ``as_of`` is its last day, compares with the other month in full,
+    so Feb 28 matches all of January and Mar 31 is not cut back to Feb's 28 days.
+    """
+    last = calendar.monthrange(year, month)[1]
+    if as_of.day == calendar.monthrange(as_of.year, as_of.month)[1]:
+        return last
+    return min(as_of.day, last)
+
+
 def parse_amount_cents(value: Any) -> int:
     if isinstance(value, bool):
         raise ValueError("Amount must be a number")
@@ -82,12 +96,51 @@ def parse_amount_cents(value: Any) -> int:
     return int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
-def format_dollars(cents: int) -> str:
-    return f"${cents / 100:,.2f}"
+def format_dollars(cents: int, *, signed: bool = False) -> str:
+    """The one display format for money: ``$1,234.50``, ``−$5.00`` (U+2212 minus).
+
+    ``signed`` adds ``+`` to positive amounts, for changes and deltas.
+    """
+    sign = "−" if cents < 0 else "+" if signed and cents > 0 else ""
+    return f"{sign}${abs(cents) / 100:,.2f}"
 
 
 def normalize_text(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+# Plural/derived endings a keyword may still match: "grocer" → "grocery", "groceries".
+_KEYWORD_SUFFIXES = frozenset({"", "s", "es", "y", "ies"})
+
+
+def _is_word_char(character: str) -> bool:
+    # Only ASCII letters and digits form word edges. CJK and other scripts are not
+    # space-delimited, so keywords in them keep matching as plain substrings.
+    return character.isascii() and character.isalnum()
+
+
+def keyword_matches(keyword: str, text: str) -> bool:
+    """Match a rule keyword at word edges, so "rent" ignores "parent" and "rental".
+
+    Keep this in step with ``keywordMatches`` in ``web/src/lib/keyword.ts``.
+    """
+    needle, haystack = normalize_text(keyword), normalize_text(text)
+    if not needle:
+        return False
+    start = haystack.find(needle)
+    while start != -1:
+        end = start + len(needle)
+        before_ok = (
+            not _is_word_char(needle[0]) or start == 0 or not _is_word_char(haystack[start - 1])
+        )
+        tail_end = end
+        while tail_end < len(haystack) and _is_word_char(haystack[tail_end]):
+            tail_end += 1
+        after_ok = not _is_word_char(needle[-1]) or haystack[end:tail_end] in _KEYWORD_SUFFIXES
+        if before_ok and after_ok:
+            return True
+        start = haystack.find(needle, start + 1)
+    return False
 
 
 @dataclass(frozen=True)
@@ -141,3 +194,9 @@ class TransactionDraft:
 
 def new_transaction_id() -> str:
     return uuid.uuid4().hex
+
+
+def month_after(start: date, offset: int) -> date:
+    """The first day of the month ``offset`` months after ``start``'s month."""
+    index = start.year * 12 + start.month - 1 + offset
+    return date(index // 12, index % 12 + 1, 1)

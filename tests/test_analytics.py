@@ -117,3 +117,33 @@ def test_anomaly_and_spending_driver_detection():
 
     drivers = spending_drivers(frame, date(2026, 7, 31))
     assert drivers.iloc[0]["change"] == 80
+
+
+def test_spending_drivers_keep_the_last_days_of_a_complete_month():
+    frame = transactions_frame(
+        [row("1", "2026-02-10", 1000), row("2", "2026-03-30", 5000)], AppConfig()
+    )
+    drivers = spending_drivers(frame, date(2026, 3, 31))
+    assert drivers.iloc[0]["current"] == 50
+    assert drivers.iloc[0]["previous"] == 10
+
+
+def test_recurring_detects_more_cycles_and_flags_stopped_charges():
+    rows = [
+        row("b1", "2026-01-02", 1500, description="Gym biweekly"),
+        row("b2", "2026-01-16", 1500, description="Gym biweekly"),
+        row("b3", "2026-01-30", 1500, description="Gym biweekly"),
+        row("y1", "2023-05-01", 9900, description="Domain #48213"),
+        row("y2", "2024-05-01", 9900, description="Domain #51122"),
+        row("y3", "2025-05-01", 9900, description="Domain #60001"),
+        row("s1", "2026-03-01", 450, description="7-Eleven"),
+        row("s2", "2026-03-08", 450, description="7-Eleven"),
+        row("s3", "2026-03-15", 450, description="7-Eleven"),
+    ]
+    recurring = recurring_transactions(transactions_frame(rows, AppConfig()), date(2026, 3, 20))
+    by_name = recurring.set_index("merchant")
+    assert by_name.loc["Gym Biweekly", "frequency"] == "Biweekly"
+    assert by_name.loc["Gym Biweekly", "status"] == "Possibly stopped"
+    assert by_name.loc["Domain", "frequency"] == "Yearly"
+    assert by_name.loc["Domain", "next_expected"] == date(2026, 5, 1)
+    assert by_name.loc["7-Eleven", "status"] == "Active"

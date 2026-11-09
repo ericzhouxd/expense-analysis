@@ -79,7 +79,7 @@ body:
       placeholder: |
         OS:
         Browser:
-        Streamlit version:
+        Node.js version:
         Python version:
     validations:
       required: false

@@ -123,3 +123,44 @@ def test_transaction_draft_rejects_an_out_of_range_date():
             amount_cents=100,
             category="Food",
         ).validated()
+
+
+@pytest.mark.parametrize(
+    ("keyword", "text", "expected"),
+    [
+        ("rent", "Rent payment", True),
+        ("rent", "Gift for parent", False),
+        ("rent", "Rental car", False),
+        ("rent", "Current Mobile bill", False),
+        ("bus", "Business cards", False),
+        ("bus", "Buses to campus", True),
+        ("grocer", "Weekly groceries", True),
+        ("grocer", "Corner grocery", True),
+        ("coffee beans", "Coffee beans 1kg", True),
+        ("咖啡", "星巴克咖啡", True),
+        ("", "anything", False),
+    ],
+)
+def test_keyword_matches_whole_words_and_plurals(keyword, text, expected):
+    from expense_analysis.models import keyword_matches
+
+    assert keyword_matches(keyword, text) is expected
+
+
+def test_comparable_day_uses_whole_months_once_a_month_is_complete():
+    from expense_analysis.models import comparable_day
+
+    assert comparable_day(date(2026, 3, 31), 2026, 2) == 28
+    assert comparable_day(date(2026, 3, 30), 2026, 2) == 28
+    assert comparable_day(date(2026, 3, 15), 2026, 2) == 15
+    assert comparable_day(date(2026, 2, 28), 2026, 1) == 31  # complete Feb vs all January
+    assert comparable_day(date(2026, 4, 30), 2026, 3) == 31
+
+
+def test_format_dollars_is_the_single_signed_money_format():
+    from expense_analysis.models import format_dollars
+
+    assert format_dollars(123450) == "$1,234.50"
+    assert format_dollars(-500) == "−$5.00"
+    assert format_dollars(500, signed=True) == "+$5.00"
+    assert format_dollars(0, signed=True) == "$0.00"

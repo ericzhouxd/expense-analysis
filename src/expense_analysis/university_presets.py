@@ -73,3 +73,75 @@ def ucla_benchmark(cohort: str, housing: str, nonresident: bool) -> dict[str, in
         "Insurance": UCLA_2026["insurance"],
         **UCLA_2026["housing"][housing],
     }
+
+
+class QuarterDates(TypedDict):
+    name: str
+    quarter_begins: str
+    instruction_begins: str
+    finals_begin: str
+    quarter_ends: str
+
+
+# UCLA Registrar annual academic calendars, read 2026-11-09 from
+# https://registrar.ucla.edu/calendars/annual-academic-calendar. Each quarter is
+# ten weeks of instruction plus finals week; fall adds a short Week 0.
+UCLA_CALENDAR_SOURCE = "https://registrar.ucla.edu/calendars/annual-academic-calendar"
+UCLA_QUARTERS: tuple[QuarterDates, ...] = (
+    {
+        "name": "Fall 2025",
+        "quarter_begins": "2025-09-22",
+        "instruction_begins": "2025-09-25",
+        "finals_begin": "2025-12-08",
+        "quarter_ends": "2025-12-12",
+    },
+    {
+        "name": "Winter 2026",
+        "quarter_begins": "2026-01-02",
+        "instruction_begins": "2026-01-05",
+        "finals_begin": "2026-03-16",
+        "quarter_ends": "2026-03-20",
+    },
+    {
+        "name": "Spring 2026",
+        "quarter_begins": "2026-03-25",
+        "instruction_begins": "2026-03-30",
+        "finals_begin": "2026-06-08",
+        "quarter_ends": "2026-06-12",
+    },
+    {
+        "name": "Fall 2026",
+        "quarter_begins": "2026-09-21",
+        "instruction_begins": "2026-09-24",
+        "finals_begin": "2026-12-07",
+        "quarter_ends": "2026-12-11",
+    },
+    {
+        "name": "Winter 2027",
+        "quarter_begins": "2027-01-04",
+        "instruction_begins": "2027-01-04",
+        "finals_begin": "2027-03-15",
+        "quarter_ends": "2027-03-19",
+    },
+    {
+        "name": "Spring 2027",
+        "quarter_begins": "2027-03-24",
+        "instruction_begins": "2027-03-29",
+        "finals_begin": "2027-06-07",
+        "quarter_ends": "2027-06-11",
+    },
+)
+# Summer Sessions 2027 run June 21 – September 10.
+UCLA_SUMMER_ENDS = {"2027": "2027-09-12"}
+
+# Living costs a student pays week to week. Housing is a bill; books arrive
+# once a quarter, so they are shown separately.
+EVERYDAY_COMPONENTS = ("Food", "Transportation", "Personal")
+
+
+def everyday_estimate(housing: str) -> dict[str, int]:
+    """UCLA's nine-month everyday living estimate, in cents, by component."""
+    if housing not in UCLA_2026["housing"]:
+        raise ValueError("Choose a listed housing type.")
+    components = UCLA_2026["housing"][housing]
+    return {name: components[name] for name in (*EVERYDAY_COMPONENTS, "Books")}
