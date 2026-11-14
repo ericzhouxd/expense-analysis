@@ -3,12 +3,17 @@ import { useState } from "react";
 
 import { get, type Insights as InsightsData } from "../api";
 import { linkTo } from "../App";
-import { CashFlowChart, DotColumns, DriverBars } from "../components/charts";
+import { CashFlowChart, DotColumns, DriverBars, monthColumns } from "../components/charts";
 import { Card, Collapsible, Empty, Glyph, Readout, Segmented, Stepper } from "../components/instrument";
-import { money, monthLabel, percent, plural, shortDate } from "../lib/format";
+import { money, monthLabel, monthName, percent, plural, shortDate, wholeMoney } from "../lib/format";
 import { navigate, useLocation } from "../router";
 
 type Window = "rolling_3" | "rolling_6" | "rolling_12";
+
+function monthBefore(month: string): string {
+  const [year = 1970, number = 1] = month.split("-").map(Number);
+  return number === 1 ? `${year - 1}-12` : `${year}-${String(number - 1).padStart(2, "0")}`;
+}
 
 export function Insights() {
   const { params } = useLocation();
@@ -52,7 +57,6 @@ export function Insights() {
     <div className="page-head">
       <div>
         <h1>Insights</h1>
-        <p>What changed, what repeats and what stands out.</p>
       </div>
       <div className="row">
         <Stepper
@@ -91,19 +95,48 @@ export function Insights() {
   const windowLabel = { rolling_3: "3-month", rolling_6: "6-month", rolling_12: "12-month" }[window];
   const savings = data.savings;
   const year = data.year;
+  const forecast = data.forecast;
+  const selected = data.monthly.find((item) => item.month === data.month);
+  const isCurrent = data.month === data.months[data.months.length - 1];
+  const thisMonth = forecast.months.find((item) => item.partial);
+  // Money in and out only says something once some income is recorded.
+  const hasIncome = data.cash_flow.some((item) => item.income > 0);
+  const scopeWord = scope === "all" ? "" : "everyday ";
+  // "$310 in a quarter, $240 on break, $200 in summer", for the kinds the forecast has seen.
+  const rates = (
+    [
+      ["quarter", "in a quarter"],
+      ["break", "on break"],
+      ["summer", "in summer"],
+    ] as const
+  ).flatMap(([kind, words]) => {
+    const rate = forecast.weekly_rates[kind];
+    return rate === undefined ? [] : [`${wholeMoney(rate)} ${words}`];
+  });
 
   return (
     <div className="stack loose">
       {header}
 
       <div className="readouts" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))" }}>
-        <Readout label="Income to date" value={money(savings.income)} tone="sage" />
-        <Readout label="Net spending to date" value={money(savings.net_outflow)} tone="coral" />
         <Readout
-          label="Saved"
-          value={money(savings.savings, { signed: true })}
-          tone={savings.savings >= 0 ? "sage" : "coral"}
-          sub={savings.rate === null ? "no income recorded" : `${percent(savings.rate)} of income`}
+          label={isCurrent ? `${monthName(data.month)} so far` : monthName(data.month)}
+          value={money(selected?.spent ?? 0)}
+          sub={selected ? `${windowLabel} average ${money(selected[window])}` : undefined}
+        />
+        {thisMonth ? (
+          <Readout
+            label={`${monthName(thisMonth.month)} is heading for`}
+            value={wholeMoney(thisMonth.expected)}
+            tone="amber"
+            sub={`likely ${wholeMoney(thisMonth.low)}–${wholeMoney(thisMonth.high)} by month end`}
+          />
+        ) : null}
+        <Readout
+          label="Typical month"
+          value={forecast.months.length ? wholeMoney(forecast.level) : "—"}
+          tone={forecast.months.length ? undefined : "text"}
+          sub={forecast.months.length ? "recent months count more" : "needs two full months"}
         />
         {data.duplicate_groups ? (
           <Readout label="Possible duplicates" value={String(data.duplicate_groups)} tone="text" sub="same date, amount, text" />
@@ -113,14 +146,21 @@ export function Insights() {
       </div>
 
       <div className="spread">
-        <Card title="What changed" hint={`${monthLabel(data.month)} vs the month before, same days`}>
+        <Card title={`What changed since ${monthName(monthBefore(data.month))}`}>
           {data.drivers.length ? (
-            <DriverBars drivers={data.drivers} />
+            <DriverBars
+              drivers={data.drivers}
+              onPick={(category) =>
+                navigate(
+                  `/transactions?category=${encodeURIComponent(category)}&start=${data.month}-01&end=${data.as_of}`,
+                )
+              }
+            />
           ) : (
             <p className="muted">No category moved much.</p>
           )}
         </Card>
-        <Card title="Stands out" hint={`unusually large for their category in ${monthLabel(data.month)}`}>
+        <Card title="Stands out">
           {standouts.length ? (
             <div>
               {standouts.map((item, at) => (
@@ -144,7 +184,6 @@ export function Insights() {
 
       <Card
         title="Trend"
-        hint={`net spending with the ${windowLabel} average`}
         actions={
           <Segmented<Window>
             label="Average window"
@@ -159,18 +198,62 @@ export function Insights() {
         }
       >
         <DotColumns
-          data={data.monthly}
+          data={monthColumns(data.monthly)}
           highlight={data.month}
           average={data.monthly.map((item) => item[window])}
           averageLabel={`${windowLabel} average`}
+          forecast={forecast.months}
+          onPick={(picked) => setParams({ month: picked })}
+          pickable={data.months}
         />
       </Card>
 
       <div className="spread">
-        <Card title="Cash flow" hint="money in vs out by month">
-          {data.cash_flow.length ? <CashFlowChart data={data.cash_flow} /> : <p className="muted">No months yet.</p>}
+        <Card title="Looking ahead">
+          {forecast.months.length ? (
+            <>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Month</th>
+                      <th className="num">Expected</th>
+                      <th className="num">Likely range</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {forecast.months.map((item) => (
+                      <tr key={item.month}>
+                        <td>
+                          {monthLabel(item.month)}
+                          {item.partial ? <div className="tiny dim">{money(item.spent)} so far</div> : null}
+                        </td>
+                        <td className="num warn">~{wholeMoney(item.expected)}</td>
+                        <td className="num">
+                          {wholeMoney(item.low)}–{wholeMoney(item.high)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="tiny dim" style={{ margin: 0 }}>
+                {rates.length
+                  ? `A week costs you about ${rates.join(", ")}. Each month is your typical month scaled by how many of those days it has. `
+                  : ""}
+                The range is how far this was off when replayed on your last{" "}
+                {plural(forecast.history_months, "full month")}
+                {forecast.typical_miss ? ` (about ±${wholeMoney(forecast.typical_miss)})` : ""}.
+              </p>
+            </>
+          ) : (
+            <p className="muted">
+              A forecast needs two full months of {scopeWord}spending to learn from
+              {forecast.history_months ? `; there is ${forecast.history_months} so far` : ""}.
+            </p>
+          )}
         </Card>
-        <Card title="Repeats" hint="subscriptions and regular stops">
+        <Card title="Repeats">
           {data.recurring.length ? (
             <div className="table-wrap">
               <table className="table">
@@ -211,8 +294,19 @@ export function Insights() {
         </Card>
       </div>
 
+      {hasIncome ? (
+        <Card
+          title="Cash flow"
+          hint={`saved ${money(savings.savings, { signed: true })}${
+            savings.rate === null ? "" : ` (${percent(savings.rate)} of income)`
+          }`}
+        >
+          <CashFlowChart data={data.cash_flow} />
+        </Card>
+      ) : null}
+
       {data.terms.length ? (
-        <Card title="By school term" hint="quarters, breaks and summer on the UCLA calendar">
+        <Card title="By school term">
           <div className="table-wrap">
             <table className="table">
               <thead>
@@ -242,7 +336,7 @@ export function Insights() {
       ) : null}
 
       {year ? (
-        <Collapsible title={`School year ${year.label}`} hint="against UCLA's estimate">
+        <Collapsible title={`School year ${year.label}`}>
           <div className="readouts" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
             <Readout label="Estimate by today" value={money(year.estimate_to_date)} tone="text" sub={`of ${money(year.estimate)}`} />
             <Readout label="Everyday spent" value={money(year.spent)} tone="coral" />

@@ -23,7 +23,9 @@ from ..analytics import (
     savings_summary,
     spending_anomalies,
     spending_drivers,
+    spending_forecast,
     transactions_frame,
+    weekly_spending,
 )
 from ..categories import keyword_rules, suggestion_data
 from ..choices import choice_options, unused_choices
@@ -37,6 +39,9 @@ from ..term_budget import (
     CADENCES,
     HOUSING,
     BudgetSettings,
+    bill_totals,
+    period_for,
+    period_kind_lookup,
     period_totals,
     school_periods,
     term_budget,
@@ -129,6 +134,13 @@ def _comparison(rows: list[Row], start: date, end: date, prior: date, prior_end:
     return payload(comparison(rows, start, end, prior, prior_end))
 
 
+def _in_scope(frame: pd.DataFrame, everyday: bool) -> pd.DataFrame:
+    """The Everyday rows of a classified frame, or all of it."""
+    if not everyday or frame.empty:
+        return frame
+    return frame[frame["spending_treatment"].eq("Everyday")]
+
+
 def _vocabulary(database: Database, config: AppConfig) -> Row:
     rows = database.list_transactions()
     names: dict[str, Counter[str]] = defaultdict(Counter)
@@ -164,53 +176,39 @@ def bootstrap(database: Database, config: AppConfig, today: date) -> Row:
 
 def _signals(
     *,
-    scope_label: str,
     summary: Row,
-    month_comparison: Row,
-    year_comparison: Row,
-    drivers: pd.DataFrame,
-    recurring: pd.DataFrame,
+    bills: list[Row],
     month_rows: list[Row],
-    as_of: date,
-    duplicate_groups: int,
+    rows: list[Row],
+    duplicates: list[Row],
 ) -> list[Row]:
+    """Banners for things that need doing, most pressing first.
+
+    Comparisons and upcoming charges are not banners: the panel and the Coming up
+    card show those. Each banner names where to fix it.
+    """
     signals: list[Row] = []
-    change = month_comparison["change"]
-    if change is not None:
-        percent = month_comparison["percent"]
-        prior_start = date.fromisoformat(month_comparison["prior_start"])
-        prior_end = date.fromisoformat(month_comparison["prior_end"])
-        text = (
-            f"{scope_label} is {format_dollars(change, signed=True)}"
-            + (f" ({percent:+.1f}%)" if percent is not None else "")
-            + f" vs {short_date(prior_start)}–{prior_end.day}."
+    # A bill without a category can never show a payment, so it is not news.
+    late = [bill for bill in bills if bill["status"] == "late" and bill["categories"]]
+    if len(late) == 1:
+        bill = late[0]
+        signals.append(
+            {
+                "tone": "up",
+                "text": f"{bill['name']} ({format_dollars(bill['amount'])}) was due "
+                f"{short_date(bill['due'])} and no payment shows up.",
+                "action": "bills",
+            }
         )
-        if change > 0 and not drivers.empty and float(drivers.iloc[0]["change"]) > 0:
-            top = drivers.iloc[0]
-            increase = format_dollars(to_cents(top["change"]), signed=True)
-            text += f" Biggest increase: {top['category']} ({increase})."
-        signals.append({"tone": "up" if change > 0 else "ok", "text": text})
-    if not recurring.empty:
-        horizon = as_of + timedelta(days=14)
-        upcoming = recurring[
-            recurring["status"].eq("Active")
-            & recurring["next_expected"].map(lambda day: as_of < day <= horizon)
-        ].sort_values("next_expected")
-        for _, item in upcoming.head(2).iterrows():
-            signals.append(
-                {
-                    "tone": "info",
-                    "text": f"{item['merchant']} "
-                    f"~{format_dollars(to_cents(item['average_amount']))} is expected "
-                    f"{short_date(item['next_expected'])} ({item['frequency'].lower()}).",
-                }
-            )
-        stopped = recurring[recurring["status"].eq("Possibly stopped")]
-        if not stopped.empty:
-            names = ", ".join(str(name) for name in stopped["merchant"].head(3))
-            signals.append(
-                {"tone": "info", "text": f"Possibly stopped: {names}. Cancelled on purpose?"}
-            )
+    elif late:
+        names = ", ".join(dict.fromkeys(str(bill["name"]) for bill in late))
+        signals.append(
+            {
+                "tone": "up",
+                "text": f"{len(late)} bills are past due with no payment showing: {names}.",
+                "action": "bills",
+            }
+        )
     unknown = sum(row["category"] == "Uncategorized" for row in month_rows)
     if unknown:
         signals.append(
@@ -221,38 +219,34 @@ def _signals(
                 "action": "uncategorized",
             }
         )
-    elif month_rows:
-        signals.append(
-            {
-                "tone": "ok",
-                "text": f"All {len(month_rows)} entries this month have a category.",
-            }
-        )
-    if summary["review_count"]:
+    review = summary["review_count"]
+    if review:
+        one = review == 1
         signals.append(
             {
                 "tone": "warn",
-                "text": f"{summary['review_count']} purchase(s) use a category you haven't "
-                "sorted into everyday, bills or big stuff yet. They count as everyday for now.",
+                "text": f"{review} purchase{'' if one else 's'} this month "
+                f"{'is' if one else 'are'} in a category you haven't marked as everyday, "
+                f"a bill or big stuff. Until you do, {'it counts' if one else 'they count'} "
+                "against the weekly line.",
                 "action": "treatments",
             }
         )
-    if year_comparison["previous"] is not None:
-        signals.append(
-            {
-                "tone": "info",
-                "text": f"Same point last year: {format_dollars(year_comparison['previous'])} "
-                f"({format_dollars(year_comparison['change'], signed=True)}).",
-            }
-        )
-    if duplicate_groups:
-        signals.append(
-            {
-                "tone": "warn",
-                "text": f"{duplicate_groups} group(s) of identical transactions exist. "
-                "Check them before deleting anything.",
-            }
-        )
+    if duplicates:
+        count = len(duplicates)
+        by_id = {row["id"]: row for row in rows}
+        first = by_id.get(str(duplicates[0]["transaction_ids"]).split(",")[0])
+        signal: Row = {
+            "tone": "warn",
+            "text": f"{count} transaction{'' if count == 1 else 's'} "
+            f"{'is' if count == 1 else 'are'} saved more than once with the same date, "
+            "amount and description.",
+        }
+        if first is not None:
+            day = str(first["transaction_date"])[:10]
+            signal["action"] = "duplicates"
+            signal["filter"] = {"start": day, "end": day, "q": first["description"]}
+        signals.append(signal)
     return signals
 
 
@@ -290,7 +284,6 @@ def overview(
     classified = classify_spending(rows, settings, rules)
     term = term_budget(settings, rows, today, rules)
     everyday = scope != "all"
-    scope_label = "Everyday" if everyday else "All spending"
     scoped = [r for r in classified if not everyday or r["spending_treatment"] == "Everyday"]
 
     def within(row: Row, start: date, end: date) -> bool:
@@ -358,7 +351,7 @@ def overview(
         [
             bill
             for bill in term["bills"]
-            if bill["due"].strftime("%Y-%m") == month or bill["status"] in ("late", "soon")
+            if bill["due"].strftime("%Y-%m") == month or bill["status"] in ("late", "part", "soon")
         ]
         if is_current
         else []
@@ -372,14 +365,34 @@ def overview(
         else purchases[:8]
     )
     frame = transactions_frame(classified, config)
+    timeline = frame
     if not frame.empty:
+        timeline = frame[frame["transaction_date"].dt.date <= today]
         frame = frame[frame["transaction_date"].dt.date <= as_of]
-    scoped_frame = (
-        frame[frame["spending_treatment"].eq("Everyday")] if everyday and not frame.empty else frame
-    )
-    monthly = monthly_spending(scoped_frame)
-    drivers = spending_drivers(scoped_frame, as_of) if not scoped_frame.empty else pd.DataFrame()
-    recurring = recurring_transactions(frame, as_of) if not frame.empty else pd.DataFrame()
+    # The month strip is a way to move between months, so it runs through today
+    # whichever month is open.
+    monthly = monthly_spending(_in_scope(timeline, everyday), through=today)
+    weekly = weekly_spending(_in_scope(timeline, everyday), through=today)
+    upcoming: list[Row] = []
+    if is_current and not frame.empty:
+        # Repeating charges due in the next two weeks that no bill already covers.
+        recurring = recurring_transactions(frame, as_of)
+        covered = settings.bill_categories if settings else {}
+        horizon = as_of + timedelta(days=14)
+        for _, item in recurring.sort_values("next_expected").iterrows():
+            if (
+                item["status"] == "Active"
+                and as_of < item["next_expected"] <= horizon
+                and item["category"] not in covered
+            ):
+                upcoming.append(
+                    {
+                        "name": item["merchant"],
+                        "amount": to_cents(item["average_amount"]),
+                        "due": item["next_expected"],
+                        "frequency": item["frequency"],
+                    }
+                )
 
     return payload(
         {
@@ -406,6 +419,8 @@ def overview(
             "days": days,
             "categories": categories,
             "bills": bills,
+            "bill_totals": bill_totals(bills),
+            "upcoming": upcoming,
             "ticker": {
                 "label": "TODAY" if is_current else "LATEST",
                 "items": [
@@ -427,16 +442,22 @@ def overview(
                 }
                 for _, item in monthly.tail(12).iterrows()
             ],
+            "weekly": [
+                {
+                    "week": item["week"],
+                    "end": item["week"] + timedelta(days=6),
+                    "label": period_for(item["week"]).label(item["week"]),
+                    "spent": to_cents(item["spending"]),
+                    "rolling_4": to_cents(item["rolling_4"]),
+                }
+                for _, item in weekly.tail(12).iterrows()
+            ],
             "signals": _signals(
-                scope_label=scope_label,
                 summary=summary,
-                month_comparison=month_comparison,
-                year_comparison=year_comparison,
-                drivers=drivers,
-                recurring=recurring,
+                bills=term["bills"] if is_current else [],
                 month_rows=month_rows,
-                as_of=as_of,
-                duplicate_groups=len(database.duplicate_groups()),
+                rows=rows,
+                duplicates=database.duplicate_groups(),
             ),
         }
     )
@@ -454,11 +475,13 @@ def insights(
     everyday = scope != "all"
     classified = classify_spending(rows, settings, rules)
     frame = transactions_frame(classified, config)
+    timeline = frame
     if not frame.empty:
+        timeline = frame[frame["transaction_date"].dt.date <= today]
         frame = frame[frame["transaction_date"].dt.date <= as_of]
-    scoped = (
-        frame[frame["spending_treatment"].eq("Everyday")] if everyday and not frame.empty else frame
-    )
+    scoped = _in_scope(frame, everyday)
+    # The trend and the forecast look from today, whichever month is open.
+    timeline = _in_scope(timeline, everyday)
     drivers = spending_drivers(scoped, as_of) if not scoped.empty else pd.DataFrame()
     recurring = recurring_transactions(frame, as_of) if not frame.empty else pd.DataFrame()
     anomalies = spending_anomalies(scoped) if not scoped.empty else pd.DataFrame()
@@ -466,8 +489,9 @@ def insights(
     terms = period_totals(
         [r for r in classified if not everyday or r["spending_treatment"] == "Everyday"], as_of
     )
-    monthly = monthly_spending(scoped)
+    monthly = monthly_spending(timeline, through=today)
     savings = savings_summary(frame)
+    forecast = spending_forecast(timeline, today, kind_of=period_kind_lookup())
 
     year = term_budget(settings, rows, as_of, rules)["year"]
     return payload(
@@ -532,6 +556,27 @@ def insights(
                 }
                 for _, item in monthly.iterrows()
             ],
+            "forecast": {
+                "level": to_cents(forecast.level),
+                "typical_miss": None
+                if forecast.typical_miss is None
+                else to_cents(forecast.typical_miss),
+                "history_months": forecast.history_months,
+                "weekly_rates": {
+                    kind: to_cents(rate) for kind, rate in forecast.weekly_rates.items()
+                },
+                "months": [
+                    {
+                        "month": str(item["month"]),
+                        "expected": to_cents(item["expected"]),
+                        "low": to_cents(item["low"]),
+                        "high": to_cents(item["high"]),
+                        "spent": to_cents(item["spent"]),
+                        "partial": bool(item["partial"]),
+                    }
+                    for _, item in forecast.months.iterrows()
+                ],
+            },
             "savings": {
                 "income": to_cents(savings["income"] or 0),
                 "net_outflow": to_cents(savings["net_outflow"] or 0),
@@ -572,9 +617,23 @@ def budget(database: Database, config: AppConfig, *, today: date, period: str | 
     rules = database.get_spending_rules()
     day = date.fromisoformat(period) if period else None
     result = term_budget(settings, rows, today, rules, day=day)
+    week = result["week"]
+    everyday = [
+        r for r in classify_spending(rows, settings, rules) if r["spending_treatment"] == "Everyday"
+    ]
     return payload(
         {
             **result,
+            # This week against the same weekdays of last week, as the overview shows it.
+            "comparison": _comparison(
+                everyday,
+                week["start"],
+                today,
+                week["start"] - timedelta(days=7),
+                today - timedelta(days=7),
+            )
+            if week
+            else None,
             "big_stuff": [serialize_row(row) for row in result["big_stuff"][:30]],
             "saved_settings": settings is not None,
             "housing_options": list(HOUSING),

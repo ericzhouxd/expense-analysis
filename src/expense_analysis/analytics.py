@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import calendar
 import re
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 import numpy as np
@@ -10,6 +11,16 @@ import pandas as pd
 
 from .config import AppConfig
 from .models import comparable_day
+
+# Weight of the newest month in the forecast's running level; each older month
+# counts 60% as much as the one after it.
+FORECAST_SMOOTHING = 0.4
+FORECAST_MINIMUM_MONTHS = 2
+# A kind of day (quarter, break, summer) needs about a week of history
+# before its own rate counts as much as the overall average.
+FORECAST_SHRINK_DAYS = 7
+AVERAGE_MONTH_DAYS = 365.25 / 12
+FORECAST_COLUMNS = ("month", "expected", "low", "high", "spent", "partial")
 
 TRANSACTION_COLUMNS = (
     "id",
@@ -39,6 +50,24 @@ class PeriodMetrics:
     monthly_average: float
     projected_month_end: float
     is_partial: bool
+
+
+@dataclass(frozen=True)
+class SpendingForecast:
+    """Projected net spending by month, in dollars.
+
+    ``level`` is the typical month the forecast starts from and ``typical_miss`` is
+    how far this method was off, on average, when replayed over the months already
+    recorded. ``months`` is empty until there is enough history.
+    """
+
+    level: float
+    typical_miss: float | None
+    history_months: int
+    months: pd.DataFrame
+    # What a week of each kind of day (quarter, break, summer) costs, when the
+    # forecast was given a calendar.
+    weekly_rates: dict[str, float] = field(default_factory=dict)
 
 
 def _percent_change(current: float, previous: float) -> float | None:
@@ -101,14 +130,24 @@ def spending_frame(frame: pd.DataFrame, *, personal_only: bool = False) -> pd.Da
     return spending
 
 
-def monthly_spending(frame: pd.DataFrame, *, personal_only: bool = False) -> pd.DataFrame:
+def monthly_spending(
+    frame: pd.DataFrame, *, personal_only: bool = False, through: date | None = None
+) -> pd.DataFrame:
+    """Net spending per month with rolling averages; quiet months count as zero.
+
+    ``through`` extends the months to that date's month, so a month with nothing
+    spent yet still appears.
+    """
     spending = spending_frame(frame, personal_only=personal_only)
     columns = ["month", "spending", "rolling_3", "rolling_6", "rolling_12"]
     if spending.empty:
         return pd.DataFrame(columns=columns)
 
     grouped = spending.groupby("month", as_index=True)["spending"].sum().sort_index()
-    full_index = pd.period_range(grouped.index.min(), grouped.index.max(), freq="M")
+    last = grouped.index.max()
+    if through is not None:
+        last = max(last, pd.Period(through, freq="M"))
+    full_index = pd.period_range(grouped.index.min(), last, freq="M")
     grouped = grouped.reindex(full_index, fill_value=0.0)
     result = grouped.rename_axis("month").reset_index()
     for window in (3, 6, 12):
@@ -193,6 +232,174 @@ def period_metrics(
         monthly_average=monthly_average,
         projected_month_end=float(projected),
         is_partial=is_partial,
+    )
+
+
+def weekly_spending(frame: pd.DataFrame, *, through: date | None = None) -> pd.DataFrame:
+    """Net spending per Monday-to-Sunday week with a four-week rolling average.
+
+    ``week`` is the Monday. Quiet weeks count as zero and ``through`` extends the
+    weeks to that date's week, the same way ``monthly_spending`` treats months.
+    """
+    spending = spending_frame(frame)
+    columns = ["week", "spending", "rolling_4"]
+    if spending.empty:
+        return pd.DataFrame(columns=columns)
+
+    weeks = spending["transaction_date"].dt.to_period("W-SUN")
+    grouped = spending.groupby(weeks)["spending"].sum().sort_index()
+    last = grouped.index.max()
+    if through is not None:
+        last = max(last, pd.Period(through, freq="W-SUN"))
+    full_index = pd.period_range(grouped.index.min(), last, freq="W-SUN")
+    result = grouped.reindex(full_index, fill_value=0.0).rename_axis("week").reset_index()
+    result["week"] = result["week"].map(lambda week: week.start_time.date())
+    result["rolling_4"] = result["spending"].rolling(4, min_periods=1).mean()
+    return result
+
+
+def _kind_factors(daily: pd.Series, kinds: pd.Series) -> dict[str, float]:
+    """How a day of each kind (quarter, break, summer) compares with the average day.
+
+    A kind seen on few days is pulled toward 1 so it cannot swing the forecast.
+    """
+    overall = float(daily.mean()) if len(daily) else 0.0
+    if overall <= 0:
+        return {}
+    factors = {}
+    for kind, values in daily.groupby(kinds):
+        ratio = max(0.0, float(values.mean()) / overall)
+        days = len(values)
+        factors[str(kind)] = (days * ratio + FORECAST_SHRINK_DAYS) / (days + FORECAST_SHRINK_DAYS)
+    return factors
+
+
+def _day_weights(kinds: pd.Series, factors: dict[str, float]) -> pd.Series:
+    """Each day's factor; days of an unknown kind count as average."""
+    return kinds.map(factors).fillna(1.0).astype(float)
+
+
+def _month_mix(kinds: pd.Series, factors: dict[str, float]) -> pd.Series:
+    """The average factor of each month's days: 1 for an ordinary month."""
+    weights = _day_weights(kinds, factors)
+    return weights.groupby(pd.DatetimeIndex(weights.index).to_period("M")).mean()
+
+
+def _typical_month(history: pd.Series, mix: pd.Series) -> float:
+    """Recent months count more, each first scaled to what an ordinary month would cost."""
+    adjusted = history / mix.reindex(history.index)
+    return max(0.0, float(adjusted.ewm(alpha=FORECAST_SMOOTHING, adjust=True).mean().iloc[-1]))
+
+
+def spending_forecast(
+    frame: pd.DataFrame,
+    as_of: date,
+    *,
+    horizon: int = 3,
+    kind_of: Callable[[date], str | None] | None = None,
+) -> SpendingForecast:
+    """Project the rest of ``as_of``'s month and the ``horizon`` months after it.
+
+    The typical month is an exponentially weighted average of the complete months,
+    so recent months count more. ``kind_of`` names the kind of each day on the
+    school calendar (quarter, break, summer). When given, the forecast learns how
+    much a day of each kind costs against the average day, and a month is the
+    typical month scaled by the mix of its days.
+
+    The range comes from replaying the forecast over the recorded months, each
+    predicted only from what came before it, and averaging how far it missed; it
+    widens for months further out. A month in progress keeps what is already
+    spent and adds the remaining days at a rate that moves from the typical month
+    to this month's own pace as the month goes on.
+    """
+    empty = pd.DataFrame(columns=list(FORECAST_COLUMNS))
+    spending = spending_frame(frame)
+    if not spending.empty:
+        spending = spending[spending["transaction_date"] <= pd.Timestamp(as_of)]
+    if spending.empty:
+        return SpendingForecast(0.0, None, 0, empty)
+
+    current = pd.Period(as_of, freq="M")
+    partial = as_of.day < current.days_in_month
+    totals = spending.groupby("month")["spending"].sum()
+    first = spending["transaction_date"].min()
+    start = first.to_period("M")
+    # A ledger that starts mid-month would make its first month look cheap.
+    if first.day > 7:
+        start += 1
+    last_complete = current - 1 if partial else current
+    history = totals.reindex(pd.period_range(start, last_complete, freq="M"), fill_value=0.0)
+    spent = float(totals.get(current, 0.0)) if partial else 0.0
+    if len(history) < FORECAST_MINIMUM_MONTHS:
+        return SpendingForecast(0.0, None, len(history), empty)
+
+    # Every day from the first month of history to the last month forecast.
+    days = pd.date_range(
+        start.start_time, (current + horizon + 1).start_time, freq="D", inclusive="left"
+    )
+    kinds = pd.Series(
+        [kind_of(day.date()) if kind_of else None for day in days], index=days, dtype=object
+    )
+    daily = (
+        spending.groupby(spending["transaction_date"].dt.normalize())["spending"]
+        .sum()
+        .reindex(days, fill_value=0.0)
+    )
+
+    # Each month is compared with the forecast made only from the days before it.
+    misses = []
+    for at in range(1, len(history)):
+        month = history.index[at]
+        before = days < month.start_time
+        seen = _kind_factors(daily[before], kinds[before])
+        mix = _month_mix(kinds, seen)
+        guess = _typical_month(history.iloc[:at], mix) * float(mix.get(month, 1.0))
+        misses.append(abs(float(history.iloc[at]) - guess))
+    miss = float(np.mean(misses))
+
+    recorded = days < (last_complete + 1).start_time
+    factors = _kind_factors(daily[recorded], kinds[recorded])
+    mix = _month_mix(kinds, factors)
+    level = _typical_month(history, mix)
+
+    rows: list[dict[str, object]] = []
+    if partial:
+        weights = _day_weights(kinds[days.to_period("M") == current], factors)
+        today = pd.Timestamp(as_of)
+        ahead = float(weights[weights.index > today].mean())
+        behind = float(weights[weights.index <= today].mean())
+        left = (current.days_in_month - as_of.day) / current.days_in_month
+        expected = spent + left * spent * ahead / behind + left * left * level * ahead
+        band = miss * left**0.5 * ahead
+        rows.append(
+            {
+                "month": current,
+                "expected": expected,
+                "low": min(expected, max(spent, expected - band)),
+                "high": expected + band,
+                "spent": spent,
+                "partial": True,
+            }
+        )
+    for step in range(1, horizon + 1):
+        scale = float(mix.get(current + step, 1.0))
+        band = miss * scale * (1 + (step - 1) * FORECAST_SMOOTHING**2) ** 0.5
+        rows.append(
+            {
+                "month": current + step,
+                "expected": level * scale,
+                "low": max(0.0, level * scale - band),
+                "high": level * scale + band,
+                "spent": 0.0,
+                "partial": False,
+            }
+        )
+    return SpendingForecast(
+        level,
+        miss,
+        len(history),
+        pd.DataFrame(rows, columns=list(FORECAST_COLUMNS)),
+        {kind: level * factor * 7 / AVERAGE_MONTH_DAYS for kind, factor in factors.items()},
     )
 
 
@@ -299,6 +506,7 @@ def recurring_transactions(frame: pd.DataFrame, as_of: date | None = None) -> pd
     expenses = spending_frame(frame)
     columns = [
         "merchant",
+        "category",
         "frequency",
         "occurrences",
         "average_amount",
@@ -347,6 +555,7 @@ def recurring_transactions(frame: pd.DataFrame, as_of: date | None = None) -> pd
         recurring.append(
             {
                 "merchant": str(key).title(),
+                "category": str(group["category"].mode().iloc[0]),
                 "frequency": frequency,
                 "occurrences": len(group),
                 "average_amount": mean_amount,

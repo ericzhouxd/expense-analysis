@@ -56,14 +56,15 @@ Words the parser understands:
 
 The top bar (or the bottom tabs on a phone) has six pages:
 
-- **Overview**: the LED panel shows what is left this week under your weekly
-  line, with the pace meter, a day-by-day dot
-  calendar, where the money went, bills, the latest entries and month by month.
+- **Overview**: the LED panel shows what you have spent this week and this
+  month, each against the same days before, with the pace meter, a day-by-day
+  dot calendar, where the money went, bills, the latest entries, and week by
+  week and month by month.
   Click a calendar day or a category to jump to those transactions.
 - **Transactions**: every entry grouped by day, with search and filters.
 - **Budgets**: this quarter's weeks against your weekly line, bills and big stuff.
-- **Insights**: what changed, unusual purchases, repeat charges, cash flow and
-  school-term totals.
+- **Insights**: what changed, unusual purchases, the monthly trend with a
+  forecast, repeat charges and school-term totals.
 - **Import / Export**: CSV preview and import, and a full CSV backup.
 - **Settings**: categories, accounts, payment methods, keyword rules, privacy and
   the school calendar.
@@ -169,9 +170,17 @@ calendar** lists the quarter dates the app uses.
 - **Bills** are fixed costs on a schedule: monthly (on a day of the month), each
   quarter (due the first day of the quarter) or once (on a date). Add them under
   **Budgets → Settings → Bills**, with the transaction categories they are paid
-  under, such as Rent or Tuition. A bill shows as paid once purchases in its
-  categories add up to its amount around the due date. Bills due within a week
-  are marked; unpaid ones past their due date say **not paid yet**.
+  under, such as Rent or Tuition (the editor suggests categories you already
+  use and warns about one no transaction has). A bill shows as **paid** once
+  purchases in its categories come to about its amount (within 10%) near the
+  due date, and **partly paid** when less has gone out. A monthly bill counts
+  the payments closest to its own due date, so rent paid on the 30th settles
+  the 1st. Bills due within a week are marked; unpaid ones past their due date
+  say **no payment yet** and come first. An old due date with nothing recorded
+  goes quiet once a later one is paid. The card's corner shows how many are
+  paid and how much is still to go, and a bill opens the payments behind it.
+  Without bills set up, the Overview lists repeating charges expected in the
+  next two weeks instead.
 - **Big stuff** is anything rare and large, like flights or a laptop. Mark a
   category or a single purchase as **Big stuff** and it is listed separately
   instead of blowing up one week.
@@ -183,18 +192,22 @@ database as your transactions.
 
 ## Understanding the overview
 
-The big number answers one question: how much is left this week? It is the
-weekly line minus this week's everyday spending, with a per-day figure for the
-days left. Over the line, it shows how far over you are; next Monday starts
-fresh either way. Below it:
+The two big numbers are what you have spent this week and this month. Under
+each is the same comparison: how much more or less that is than the same days
+of last week, or the same days of last month. Below them:
 
-- **Week**: the school week (for example Week 7 or Finals week) and its line.
-- **Vs pace**: spending compared with an even spread of the line up to today.
+- **Left this week**: the weekly line minus this week's everyday spending, with
+  a per-day figure for the days left, or how far over the line you are. Next
+  Monday starts fresh either way.
+- **Same days last year**: this month so far against the same days a year ago.
 - **Saved this term**: what finished weeks this term left unspent (or went over).
 - The pace meter fills as you spend; the marker shows an even pace for today.
+- **Week by week** and **Month by month** are the same chart at two scales.
 
-Signals under the panel point at things worth a look, such as uncategorized
-entries or categories whose budget treatment has not been reviewed.
+Banners under the panel appear only when there is something to do, and each
+links to where you do it: a bill past its due date, entries without a
+category, categories whose budget treatment has not been reviewed, or possible
+duplicates.
 
 ## Understanding insights
 
@@ -206,8 +219,24 @@ entries or categories whose budget treatment has not been reviewed.
   Each shows when the next charge is expected, and **Possibly stopped** once it
   is more than half a cycle overdue.
 - **Unusual purchases** use a robust median-based score within each category.
-- **Cash flow** combines recorded income, refunds, and expenses.
-- **Savings rate** is available only when income has been recorded.
+- **Trend** shows net spending by month with a rolling average. Point at a
+  month to read it in the bar under the chart; click it (on a phone, tap twice)
+  to open that month. The legend switches the average and the forecast on and
+  off. The Overview's month strip and the Budgets week chart work the same way.
+- **Forecast** (amber, in the trend and under **Looking ahead**) covers the rest
+  of this month and the next three. The typical month is an average of your
+  complete months in which each older month counts 60% as much as the one after
+  it. The month in progress keeps what is already spent and adds the remaining
+  days, leaning on the typical month early on and on this month's own pace
+  later. It follows the school calendar: it learns what a week costs you in a
+  quarter, on break and in summer, and scales each month by how many of those
+  days it holds, so a month that is mostly break is not forecast like a month
+  of classes. The likely range is how far that method missed when replayed over
+  your past months, so it is wide when your months vary a lot. It needs two
+  complete months, follows the Everyday / Everything switch, and cannot see
+  one-off plans.
+- **Cash flow** combines recorded income, refunds, and expenses. It and the
+  **savings rate** appear only once some income has been recorded.
 - **Academic periods** use exact configured dates when available, then fall back
   to configured month groups.
 

@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef } from "react";
 
-import type { BillDue, Week } from "../api";
-import { compactMoney, money, shortDate } from "../lib/format";
+import type { BillDue, BillTotals, Comparison, Week } from "../api";
+import { linkTo } from "../App";
+import { compactMoney, money, rangeLabel, shortDate, versus } from "../lib/format";
 import { hot, rgba } from "../lib/glyphs";
+import { usePreview } from "./charts";
 import { Led } from "./instrument";
 
 /** Storage keeps the original treatment names; people see these. */
@@ -18,42 +20,107 @@ export function treatmentLabel(value: string): string {
 
 const BILL_COLORS: Record<BillDue["status"], string> = {
   paid: "#9FD39B",
+  part: "#F2C14E",
   late: "#FF8A70",
   soon: "#F2C14E",
   upcoming: "#59614F",
+  missed: "#59614F",
 };
 
 const BILL_TEXT: Record<BillDue["status"], string> = {
   paid: "paid",
-  late: "not paid yet",
+  part: "partly paid",
+  late: "no payment yet",
   soon: "due this week",
   upcoming: "upcoming",
+  missed: "no payment recorded",
 };
 
-export function BillList({ bills }: { bills: BillDue[] }) {
+/** "2 of 5 paid · $1,450.00 to go", for the corner of a bills card. */
+export function billsSummary(totals: BillTotals): string | undefined {
+  if (!totals.count) return undefined;
+  return `${totals.paid} of ${totals.count} paid${totals.outstanding ? ` · ${money(totals.outstanding)} to go` : ""}`;
+}
+
+/**
+ * Due dates in the order the server sends them (what needs attention first),
+ * then repeating charges expected soon. Each row opens the transactions behind it.
+ */
+export function BillList({
+  bills,
+  upcoming = [],
+}: {
+  bills: BillDue[];
+  upcoming?: { name: string; amount: number; due: string; frequency: string }[];
+}) {
   return (
     <div>
-      {bills.map((bill) => (
-        <div key={`${bill.name}${bill.due}`} className="bill-row">
-          <Led color={BILL_COLORS[bill.status]} lit={bill.status !== "upcoming"} pulse={bill.status === "soon"} />
+      {bills.map((bill) => {
+        const search = new URLSearchParams({ start: bill.window_start, end: bill.window_end });
+        if (bill.categories.length === 1) search.set("category", bill.categories[0] ?? "");
+        const settled = bill.status === "paid" || bill.status === "part";
+        return (
+          <a
+            key={`${bill.name}${bill.due}`}
+            className="bill-row pick"
+            title={`See what was paid toward ${bill.name}`}
+            {...linkTo(`/transactions?${search}`)}
+          >
+            <Led
+              color={BILL_COLORS[bill.status]}
+              lit={bill.status !== "upcoming" && bill.status !== "missed"}
+              pulse={bill.status === "soon"}
+            />
+            <span className="stack tight" style={{ gap: 2 }}>
+              <span>{bill.name}</span>
+              <span className="tiny dim caps">
+                {BILL_TEXT[bill.status]} · due {shortDate(bill.due)}
+                {bill.categories.length ? "" : " · no category, so payments can't be matched"}
+              </span>
+            </span>
+            <span className="num small" style={{ textAlign: "right" }}>
+              {settled ? (
+                <>
+                  {money(bill.paid)}
+                  {bill.paid !== bill.amount ? <span className="dim"> / {money(bill.amount)}</span> : null}
+                </>
+              ) : (
+                money(bill.amount)
+              )}
+            </span>
+          </a>
+        );
+      })}
+      {upcoming.map((item) => (
+        <a
+          key={`${item.name}${item.due}`}
+          className="bill-row pick"
+          title={`See earlier ${item.name} charges`}
+          {...linkTo(`/transactions?q=${encodeURIComponent(item.name)}`)}
+        >
+          <Led color="#7CB8FF" lit />
           <span className="stack tight" style={{ gap: 2 }}>
-            <span>{bill.name}</span>
+            <span>{item.name}</span>
             <span className="tiny dim caps">
-              {BILL_TEXT[bill.status]} · due {shortDate(bill.due)}
+              expected {shortDate(item.due)} · repeats {item.frequency.toLowerCase()}
             </span>
           </span>
-          <span className="num small" style={{ textAlign: "right" }}>
-            {bill.paid ? (
-              <>
-                {money(bill.paid)} <span className="dim">/ {money(bill.amount)}</span>
-              </>
-            ) : (
-              money(bill.amount)
-            )}
+          <span className="num small dim" style={{ textAlign: "right" }}>
+            ~{money(item.amount)}
           </span>
-        </div>
+        </a>
       ))}
     </div>
+  );
+}
+
+/** A comparison with an earlier stretch, worded and colored the same way everywhere. */
+export function Versus({ comparison }: { comparison: Comparison | null }) {
+  if (!comparison || comparison.change === null) return <span className="dim">nothing earlier to compare with</span>;
+  return (
+    <span className={comparison.change > 0 ? "up" : "ok"}>
+      {versus(comparison.change, rangeLabel(comparison.prior_start, comparison.prior_end), comparison.percent)}
+    </span>
   );
 }
 
@@ -74,8 +141,20 @@ const CORAL = "#FF8A70";
  * column lights green up to the line and coral above it. Under each finished week
  * is what it saved (or went over), which never carries into the next week.
  */
-export function WeekBars({ weeks, line, school }: { weeks: Week[]; line: number; school?: number }) {
+export function WeekBars({
+  weeks,
+  line,
+  school,
+  onPick,
+}: {
+  weeks: Week[];
+  line: number;
+  school?: number;
+  /** Called with a week that has started when it is clicked. */
+  onPick?: (week: Week) => void;
+}) {
   const id = useId().replace(/:/g, "");
+  const { active, bind, leave } = usePreview();
   const scroller = useRef<HTMLDivElement>(null);
   const currentIndex = weeks.findIndex((week) => week.state === "current");
   useEffect(() => {
@@ -96,6 +175,29 @@ export function WeekBars({ weeks, line, school }: { weeks: Week[]; line: number;
   const y = (value: number) => base - Math.round(((base - top) * Math.max(0, value)) / largest / 6) * 6;
   const lineY = y(line);
   const schoolY = school && school !== line ? y(school) : null;
+  const described = weeks.find((week) => week.start === active) ?? weeks[currentIndex] ?? weeks[weeks.length - 1];
+
+  function describe(week: Week): { text: string; tone?: "up" | "ok" }[] {
+    const title = { text: `${week.label} · ${rangeLabel(week.start, week.end)}` };
+    if (week.state === "future") return [title, { text: `ahead · ${money(week.line)} to spend` }];
+    const spent = { text: `${money(week.spent)} spent` };
+    if (week.saved !== null) {
+      return [
+        title,
+        spent,
+        week.saved >= 0
+          ? { text: `${money(week.saved)} saved`, tone: "ok" }
+          : { text: `${money(-week.saved)} over the line`, tone: "up" },
+      ];
+    }
+    return [
+      title,
+      spent,
+      week.left >= 0
+        ? { text: `${money(week.left)} left this week`, tone: "ok" }
+        : { text: `${money(-week.left)} over the line`, tone: "up" },
+    ];
+  }
 
   function pattern(name: string, color: string, shine: number) {
     return (
@@ -119,10 +221,9 @@ export function WeekBars({ weeks, line, school }: { weeks: Week[]; line: number;
         <svg
           className="chart"
           viewBox={`0 0 ${width} ${height}`}
-          role="img"
-          aria-label={weeks
-            .map((week) => `${week.label}: ${week.state === "future" ? "ahead" : `${money(week.spent)} spent`}`)
-            .join("; ")}
+          role="group"
+          aria-label="Spending by week against the weekly line"
+          onPointerLeave={leave}
         >
           <defs>
             {pattern("on", ACCENT, 0.75)}
@@ -141,14 +242,38 @@ export function WeekBars({ weeks, line, school }: { weeks: Week[]; line: number;
               <stop offset="0.45" stopColor="#fff" stopOpacity="0" />
             </linearGradient>
           </defs>
+          <g>
           {weeks.map((week, index) => {
             const x = Math.round((index + 0.5) * column - barWidth / 2);
             const current = week.state === "current";
             const spentY = y(week.spent);
             const under = Math.max(spentY, lineY);
+            const pick = onPick && week.state !== "future" ? () => onPick(week) : null;
             return (
-              <g key={week.start} opacity={week.state === "future" ? 0.55 : 1}>
+              <g
+                key={week.start}
+                className={`column ${pick ? "pick" : ""}`}
+                role={pick ? "button" : "img"}
+                tabIndex={week.start === described?.start ? 0 : -1}
+                aria-label={describe(week)
+                  .map((part) => part.text)
+                  .join(", ")}
+                opacity={week.state === "future" ? 0.55 : 1}
+                {...bind(week.start, pick)}
+              >
+                <rect x={index * column} y="0" width={column} height={height} fill="transparent" />
                 <rect x={x - 3} y={top - 3} width={barWidth + 6} height={base - top + 6} fill={`url(#${id}well)`} />
+                {week.start === active ? (
+                  <rect
+                    x={x - 3.5}
+                    y={top - 3.5}
+                    width={barWidth + 7}
+                    height={base - top + 7}
+                    fill="none"
+                    stroke="#E9ECE3"
+                    strokeOpacity="0.4"
+                  />
+                ) : null}
                 <rect x={x - 3} y={top - 3} width={barWidth + 6} height="2" fill="#000" opacity="0.7" />
                 <rect x={x - 3} y={base + 2} width={barWidth + 6} height="1" fill="#fff" opacity="0.06" />
                 <rect x={x} y={top} width={barWidth} height={base - top} fill={`url(#${id}off)`} />
@@ -200,16 +325,34 @@ export function WeekBars({ weeks, line, school }: { weeks: Week[]; line: number;
               </g>
             );
           })}
-          <rect x="0" y={top - 3} width={width} height={base - top + 6} fill={`url(#${id}sheen)`} pointerEvents="none" />
-          {schoolY !== null ? (
-            <line x1="0" x2={width} y1={schoolY} y2={schoolY} stroke="#7CB8FF" strokeWidth="1.5" strokeDasharray="1 5" strokeLinecap="round" />
-          ) : null}
-          <line x1="0" x2={width} y1={lineY} y2={lineY} stroke="#F2C14E" strokeWidth="2" strokeDasharray="1 6" strokeLinecap="round" />
-          <text x={width - 4} y={lineY - 6} textAnchor="end" style={{ fill: "#F2C14E" }}>
-            {compactMoney(line)}/wk
-          </text>
+          </g>
+          <g pointerEvents="none">
+            <rect x="0" y={top - 3} width={width} height={base - top + 6} fill={`url(#${id}sheen)`} />
+            {schoolY !== null ? (
+              <line x1="0" x2={width} y1={schoolY} y2={schoolY} stroke="#7CB8FF" strokeWidth="1.5" strokeDasharray="1 5" strokeLinecap="round" />
+            ) : null}
+            <line x1="0" x2={width} y1={lineY} y2={lineY} stroke="#F2C14E" strokeWidth="2" strokeDasharray="1 6" strokeLinecap="round" />
+            <text className="value" x={width - 4} y={lineY - 6} textAnchor="end" style={{ fill: "#F2C14E" }}>
+              {compactMoney(line)}/wk
+            </text>
+          </g>
         </svg>
       </div>
+      {described ? (
+        <div className="readout-bar wrap" aria-hidden="true">
+          <span className="caret">▸</span>
+          {describe(described).map((part) => (
+            <span key={part.text} className={part.tone}>
+              {part.text}
+            </span>
+          ))}
+          {active === null ? (
+            <span className="faint">point at a week</span>
+          ) : onPick && described.state !== "future" ? (
+            <span className="faint">click to see its transactions</span>
+          ) : null}
+        </div>
+      ) : null}
       <div className="legend">
         <span>
           <i style={{ backgroundColor: "#F2C14E" }} />

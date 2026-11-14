@@ -100,7 +100,6 @@ export function ImportExport() {
       <div className="page-head">
         <div>
           <h1>Import / Export</h1>
-          <p>Bring in a bank or card CSV, or take everything out as one file.</p>
         </div>
       </div>
 

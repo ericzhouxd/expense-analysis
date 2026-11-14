@@ -63,6 +63,16 @@ export function BudgetSettingsEditor({ budget, onDone }: { budget: Budget; onDon
     bills.some((bill) => !bill.name.trim() || (bill.cadence === "Once" && !bill.due));
   const usedStarters = new Set(bills.map((bill) => bill.name));
   const estimate = budget.housing_estimates[housing];
+  const known = budget.treatments.map((item) => item.category);
+  // Payments are matched on the exact category name, capitals included.
+  const knownSet = new Set(known);
+
+  function listed(text: string): string[] {
+    return text
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
 
   function update(key: number, change: Partial<BillDraft>) {
     setBills((items) => items.map((item) => (item.key === key ? { ...item, ...change } : item)));
@@ -77,10 +87,7 @@ export function BudgetSettingsEditor({ budget, onDone }: { budget: Budget; onDon
         bills: bills.map((bill, index) => ({
           name: bill.name.trim(),
           amount_cents: amounts[index] ?? 0,
-          categories: bill.categories
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean),
+          categories: listed(bill.categories),
           cadence: bill.cadence,
           due_day: Math.min(31, Math.max(1, Number(bill.due_day) || 1)),
           due: bill.cadence === "Once" ? bill.due : null,
@@ -98,7 +105,7 @@ export function BudgetSettingsEditor({ budget, onDone }: { budget: Budget; onDon
 
   return (
     <div className="stack loose">
-      <Card title="1 · Your weekly line" hint="what one ordinary week should cost">
+      <Card title="1 · Your weekly line">
         <div className="stack tight">
           <span className="label">Where do you live this year?</span>
           <Segmented
@@ -136,7 +143,7 @@ export function BudgetSettingsEditor({ budget, onDone }: { budget: Budget; onDon
         </p>
       </Card>
 
-      <Card title="2 · Bills" hint="fixed costs on a schedule, kept outside the weekly line">
+      <Card title="2 · Bills">
         {bills.length ? (
           <div className="table-wrap">
             <table className="table">
@@ -151,7 +158,14 @@ export function BudgetSettingsEditor({ budget, onDone }: { budget: Budget; onDon
                 </tr>
               </thead>
               <tbody>
-                {bills.map((bill, index) => (
+                {bills.map((bill, index) => {
+                  const typed = listed(bill.categories);
+                  const unused = typed.filter((item) => !knownSet.has(item));
+                  // Suggestions complete the entry after the last comma.
+                  const before = bill.categories.includes(",")
+                    ? `${bill.categories.slice(0, bill.categories.lastIndexOf(",") + 1)} `
+                    : "";
+                  return (
                   <tr key={bill.key}>
                     <td style={{ minWidth: 130 }}>
                       <input className="input" aria-label="Bill name" value={bill.name} onChange={(event) => update(bill.key, { name: event.target.value })} />
@@ -209,9 +223,22 @@ export function BudgetSettingsEditor({ budget, onDone }: { budget: Budget; onDon
                         className="input"
                         aria-label={`${bill.name} categories`}
                         placeholder="Rent"
+                        list={`bill-categories-${bill.key}`}
                         value={bill.categories}
                         onChange={(event) => update(bill.key, { categories: event.target.value })}
                       />
+                      <datalist id={`bill-categories-${bill.key}`}>
+                        {known
+                          .filter((item) => !typed.includes(item))
+                          .map((item) => (
+                            <option key={item} value={`${before}${item}`} />
+                          ))}
+                      </datalist>
+                      {!typed.length ? (
+                        <div className="tiny warn">Without a category, payments can't be matched.</div>
+                      ) : unused.length ? (
+                        <div className="tiny warn">No transactions use {unused.join(", ")} yet.</div>
+                      ) : null}
                     </td>
                     <td>
                       <button
@@ -224,7 +251,8 @@ export function BudgetSettingsEditor({ budget, onDone }: { budget: Budget; onDon
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -263,8 +291,8 @@ export function BudgetSettingsEditor({ budget, onDone }: { budget: Budget; onDon
           </button>
         </div>
         <p className="tiny dim" style={{ margin: 0 }}>
-          A bill shows as paid once purchases in its category add up to the amount around its due date. Those
-          purchases count as bills, not as everyday spending.
+          A bill shows as paid once purchases in its category come to about the amount (within 10%) near its due
+          date. Those purchases count as bills, not as everyday spending.
         </p>
       </Card>
 

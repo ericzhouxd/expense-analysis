@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { type Budget, get, put } from "../api";
 import { linkTo, openQuickAdd } from "../App";
 import { BudgetSettingsEditor } from "../components/BudgetSettingsEditor";
-import { BillList, treatmentLabel, WeekBars } from "../components/budgetBits";
+import { BillList, billsSummary, treatmentLabel, Versus, WeekBars } from "../components/budgetBits";
 import { useToast } from "../components/feedback";
 import {
   Card,
@@ -16,7 +16,7 @@ import {
   Readout,
   Stepper,
 } from "../components/instrument";
-import { dayLabel, money, plural, rangeLabel, shortDate } from "../lib/format";
+import { dayLabel, money, plural, rangeLabel, shortDate, versus } from "../lib/format";
 import { useRefresh } from "../queries";
 import { navigate, useLocation } from "../router";
 
@@ -43,7 +43,6 @@ function TreatmentEditor({ budget }: { budget: Budget }) {
     <Collapsible
       id="treatments"
       title="How categories count"
-      hint="everyday, bills or big stuff"
       open={typeof window !== "undefined" && window.location.hash === "#treatments"}
     >
       <p className="muted small" style={{ margin: 0 }}>
@@ -104,19 +103,27 @@ function WeekPanel({ budget }: { budget: Budget }) {
         <div className="row between">
           <span className="led-label">
             <span className="led-dot" aria-hidden="true" />
-            {saved >= 0 ? "SAVED THIS TERM" : "OVER THE LINE THIS TERM"}
+            SPENT THIS TERM · EVERYDAY
           </span>
           <span className="tiny dim caps">{rangeLabel(budget.period.start, budget.period.end)}</span>
         </div>
-        <HeroNumber value={money(Math.abs(saved))} tone={saved >= 0 ? "accent" : "over"} />
-        <div className="muted small" style={{ marginTop: -10 }}>
-          {totals.weeks_done
-            ? `${money(totals.everyday)} of everyday spending against ${money(totals.line_to_date)} of weekly lines`
-            : "This period hasn't started yet."}
+        <HeroNumber value={money(totals.everyday)} tone={saved >= 0 ? "accent" : "over"} />
+        <div className="small" style={{ marginTop: -10 }}>
+          {totals.weeks_done ? (
+            <span className={saved >= 0 ? "ok" : "up"}>
+              {versus(-saved, `${plural(totals.weeks_done, "week")} of weekly lines`)}
+            </span>
+          ) : (
+            <span className="dim">This period hasn't started yet.</span>
+          )}
         </div>
         <div className="readouts" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
-          <Readout label="Weeks" value={String(budget.weeks.length)} tone="text" />
-          <Readout label="Everyday" value={money(totals.everyday)} tone="coral" />
+          <Readout
+            label={saved >= 0 ? "Saved" : "Over the line"}
+            value={money(Math.abs(saved))}
+            tone={saved >= 0 ? "sage" : "coral"}
+            sub={`against ${money(totals.line_to_date)} of weekly lines`}
+          />
           <Readout label="Bills" value={money(totals.bills)} tone="text" />
           <Readout label="Big stuff" value={money(totals.big_stuff)} tone="text" />
         </div>
@@ -130,26 +137,29 @@ function WeekPanel({ budget }: { budget: Budget }) {
       <div className="row between">
         <span className="led-label">
           <span className="led-dot pulse" aria-hidden="true" />
-          {over ? `OVER THE LINE · ${week.label.toUpperCase()}` : `LEFT THIS WEEK · ${week.label.toUpperCase()}`}
+          SPENT THIS WEEK · {week.label.toUpperCase()}
         </span>
         <span className="tiny dim caps">
           {rangeLabel(week.start, week.end)} · resets monday
         </span>
       </div>
-      <HeroNumber value={money(Math.abs(week.left))} tone={over ? "over" : "accent"} />
-      <div className="muted small" style={{ marginTop: -10 }}>
-        {over
-          ? `${money(week.spent)} spent against a ${money(week.line)} line. Next week starts fresh.`
-          : `about ${money(week.per_day)} a day for ${plural(week.days_left, "day")} · whatever's left gets saved`}
+      <HeroNumber value={money(week.spent)} tone={over ? "over" : "accent"} />
+      <div className="small" style={{ marginTop: -10 }}>
+        <Versus comparison={budget.comparison} />
       </div>
       <div className="readouts" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+        <Readout
+          label={over ? "Over this week's line" : "Left this week"}
+          value={money(Math.abs(week.left))}
+          tone={over ? "coral" : "sage"}
+          sub={over ? "next week starts fresh" : `about ${money(week.per_day)} a day for ${plural(week.days_left, "day")}`}
+        />
         <Readout
           label="Weekly line"
           value={money(week.line)}
           tone="text"
           sub={line.source === "school" ? `${line.school} estimate` : `yours · ${line.school} says ${money(line.school_weekly)}`}
         />
-        <Readout label="Spent this week" value={money(week.spent)} tone="coral" />
         <Readout
           label="Vs pace"
           value={money(gap, { signed: true })}
@@ -181,7 +191,7 @@ function YearCard({ budget }: { budget: Budget }) {
   if (!year) return null;
   const under = year.estimate_to_date - year.spent;
   return (
-    <Card title={`School year ${year.label}`} hint={`${line.school}'s estimate as the reference line`}>
+    <Card title={`School year ${year.label}`}>
       <div className="readouts" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
         <Readout
           label={`${line.school} estimate by today`}
@@ -245,7 +255,6 @@ export function Budgets() {
         <div className="page-head">
           <div>
             <h1>Budget settings</h1>
-            <p>Pick the weekly line and list your bills. Everything else is automatic.</p>
           </div>
         </div>
         <BudgetSettingsEditor budget={budget} onDone={() => setEditing(false)} />
@@ -287,34 +296,19 @@ export function Budgets() {
         </div>
       </div>
 
-      {!budget.saved_settings ? (
-        <div className="signal info">
-          <span className="mark">●</span>
-          <span className="grow">
-            Using {line.school}'s {line.housing.toLowerCase()} estimate: {money(line.weekly)} a week. Add rent and other
-            bills so they stay out of the weekly line.
-          </span>
-          <button type="button" className="link small" onClick={() => setEditing(true)}>
-            Set up
-          </button>
-        </div>
-      ) : null}
-
       <WeekPanel budget={budget} />
 
-      <Card
-        title={quarter ? "Weeks this quarter" : "Weeks"}
-        hint={info.is_current ? "each week starts fresh at the line" : info.name}
-      >
-        <WeekBars weeks={budget.weeks} line={line.weekly} school={line.source === "own" ? line.school_weekly : undefined} />
-        <p className="tiny dim" style={{ margin: 0 }}>
-          A good week doesn't raise next week's line. It just adds to what you've saved:{" "}
-          {money(totals.saved, { signed: true })} so far{info.is_current ? " this term" : ""}.
-        </p>
+      <Card title={quarter ? "Weeks this quarter" : "Weeks"}>
+        <WeekBars
+          weeks={budget.weeks}
+          line={line.weekly}
+          school={line.source === "own" ? line.school_weekly : undefined}
+          onPick={(week) => navigate(`/transactions?start=${week.start}&end=${week.end}`)}
+        />
       </Card>
 
       <div className="spread">
-        <Card title="Bills" hint={info.kind === "month" ? "this month" : `this ${info.kind}`}>
+        <Card id="bills" title="Bills" hint={billsSummary(budget.bill_totals)}>
           {budget.bills.length ? (
             <BillList bills={budget.bills} />
           ) : budget.settings.bills.length ? (
@@ -328,7 +322,7 @@ export function Budgets() {
             </p>
           )}
         </Card>
-        <Card title="Big stuff" hint={totals.big_stuff ? money(totals.big_stuff) : "outside the weekly line"}>
+        <Card title="Big stuff" hint={totals.big_stuff ? money(totals.big_stuff) : undefined}>
           {budget.big_stuff.length ? (
             <div>
               {budget.big_stuff.map((row) => (

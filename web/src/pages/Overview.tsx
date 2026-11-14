@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
-import type { Overview as OverviewData, Signal } from "../api";
+import type { Comparison, Overview as OverviewData, Signal } from "../api";
 import { linkTo, openQuickAdd } from "../App";
-import { BillList } from "../components/budgetBits";
-import { CategoryMeters, DotCalendar, DotColumns } from "../components/charts";
+import { BillList, billsSummary, Versus } from "../components/budgetBits";
+import { CategoryMeters, DotCalendar, DotColumns, monthColumns, weekColumns } from "../components/charts";
 import {
   Card,
   Empty,
@@ -16,7 +16,7 @@ import {
   Stepper,
   Ticker,
 } from "../components/instrument";
-import { dayLabel, money, monthLabel, parseIso, percent, plural } from "../lib/format";
+import { dayLabel, money, monthLabel, monthName, plural, versus } from "../lib/format";
 import { categoryColor } from "../lib/glyphs";
 import { useOverview } from "../queries";
 import { navigate, useLocation } from "../router";
@@ -39,45 +39,61 @@ function writeStorage(key: string, value: string) {
   }
 }
 
-function signalLink(signal: Signal): string | null {
-  if (signal.action === "uncategorized") return "/transactions?category=Uncategorized";
-  if (signal.action === "treatments") return "/budgets#treatments";
-  if (signal.action === "budgets") return "/budgets";
-  return null;
+/** Where a banner sends you to fix what it reports. */
+function signalLink(signal: Signal): { to: string; label: string } | null {
+  switch (signal.action) {
+    case "bills":
+      return { to: "/budgets#bills", label: "See bills" };
+    case "uncategorized":
+      return { to: "/transactions?category=Uncategorized", label: "Add categories" };
+    case "treatments":
+      return { to: "/budgets#treatments", label: "Sort them" };
+    case "duplicates":
+      return signal.filter
+        ? { to: `/transactions?${new URLSearchParams(signal.filter)}`, label: "Check them" }
+        : null;
+    default:
+      return null;
+  }
 }
 
+/** One of the panel's leading numbers: what was spent, and how that compares. */
+function Spent({
+  label,
+  value,
+  over = false,
+  comparison,
+}: {
+  label: string;
+  value: number;
+  over?: boolean;
+  comparison: Comparison;
+}) {
+  return (
+    <div className="stack tight">
+      <span className="led-label">
+        <span className="led-dot pulse" aria-hidden="true" />
+        {label}
+      </span>
+      <HeroNumber value={money(value)} tone={over ? "over" : "accent"} />
+      <div className="small">
+        <Versus comparison={comparison} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The week and the month lead with the same thing in the same format: what was
+ * spent, against the same days of the week or month before. What is left of
+ * the weekly line comes second.
+ */
 function Panel({ data }: { data: OverviewData }) {
   const budget = data.budget;
-  const asOf = parseIso(data.as_of);
-  const monthName = monthLabel(data.month).toUpperCase();
-  const comparison = data.comparisons.month;
-
-  let label: string;
-  let hero: string;
-  let tone: "accent" | "over" = "accent";
-  let sub: string;
   const week = budget?.week ?? null;
-  if (budget && week) {
-    if (week.left < 0) {
-      label = `OVER THE LINE · ${week.label.toUpperCase()}`;
-      hero = money(-week.left);
-      tone = "over";
-      sub = `${money(week.spent)} spent of the ${money(week.line)} weekly line · next week starts fresh`;
-    } else {
-      label = `LEFT THIS WEEK · ${week.label.toUpperCase()}`;
-      hero = money(week.left);
-      sub = `about ${money(week.per_day)} a day for ${plural(week.days_left, "day")} · ${budget.period.toLowerCase()}`;
-    }
-  } else {
-    label = data.is_current ? "SPENT THIS MONTH" : `SPENT · ${monthName}`;
-    hero = money(data.spent);
-    sub =
-      comparison.change === null
-        ? "no earlier month to compare yet"
-        : `${money(comparison.change, { signed: true })} vs same days last month`;
-  }
-
-  const paceGap = week ? week.spent - week.pace : null;
+  const { month, week: thisWeek, year } = data.comparisons;
+  const everyday = data.scope === "everyday";
+  const over = week !== null && week.left < 0;
   const tickerItems = data.ticker.items.map((item, index) => (
     <span key={index}>
       {item.name.toUpperCase()}{" "}
@@ -87,62 +103,60 @@ function Panel({ data }: { data: OverviewData }) {
 
   return (
     <Housing label="Spending panel">
-      <div className="row between">
-        <span className="led-label">
-          <span className="led-dot pulse" aria-hidden="true" />
-          {label}
-        </span>
-        <span className="tiny dim caps">
-          {week ? "everyday spending" : data.scope === "everyday" ? "everyday spending" : "all spending"} · as of{" "}
-          {dayLabel(data.as_of)}
-        </span>
+      <div className="tiny dim caps">
+        {everyday ? "everyday spending" : "all spending"} · as of {dayLabel(data.as_of)}
       </div>
-      <HeroNumber value={hero} tone={tone} />
-      <div className="muted small" style={{ marginTop: -10 }}>
-        {sub}
-      </div>
-      <div className="readouts" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" }}>
+      <div className={week ? "hero-pair" : undefined}>
         {week ? (
-          <Readout label="Week" value={week.label} tone="text" sub={`${money(week.line)} line`} />
-        ) : (
-          <Readout label="Day" value={`${asOf.getDate()} / ${data.days_in_month}`} tone="text" />
-        )}
-        <Readout label={week ? "Spent this week" : "Spent"} value={money(week ? week.spent : data.spent)} tone="coral" />
-        {week && paceGap !== null ? (
-          <Readout
-            label="Vs pace"
-            value={money(paceGap, { signed: true })}
-            tone={paceGap > 0 ? "coral" : "sage"}
-            sub={paceGap > 0 ? "ahead of an even week" : "under an even week"}
+          <Spent
+            label={`SPENT THIS WEEK · ${week.label.toUpperCase()}`}
+            value={thisWeek.current}
+            over={everyday && over}
+            comparison={thisWeek}
           />
-        ) : (
-          <Readout
-            label="Vs last month"
-            value={comparison.percent === null ? "—" : percent(comparison.percent)}
-            tone={(comparison.change ?? 0) > 0 ? "coral" : "sage"}
-            sub="same days"
-          />
-        )}
-        {budget ? (
-          <Readout
-            label="Saved this term"
-            value={money(budget.saved, { signed: true })}
-            tone={budget.saved >= 0 ? "sage" : "coral"}
-            sub={`over ${plural(budget.weeks_done, "finished week")}`}
-          />
-        ) : (
-          <Readout
-            label="This week"
-            value={money(data.comparisons.week.current)}
-            tone="text"
-            sub={
-              data.comparisons.week.change === null
-                ? undefined
-                : `${money(data.comparisons.week.change, { signed: true })} vs last week`
-            }
-          />
-        )}
+        ) : null}
+        <Spent
+          label={
+            data.is_current
+              ? `SPENT THIS MONTH · ${monthName(data.month).toUpperCase()}`
+              : `SPENT · ${monthLabel(data.month).toUpperCase()}`
+          }
+          value={data.spent}
+          comparison={month}
+        />
       </div>
+      {week || year.previous !== null ? (
+        <div className="readouts" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
+          {week ? (
+            <Readout
+              label={over ? "Over this week's line" : "Left this week"}
+              value={money(Math.abs(week.left))}
+              tone={over ? "coral" : "sage"}
+              sub={
+                over
+                  ? `past a ${money(week.line)} line · next week starts fresh`
+                  : `of a ${money(week.line)} line · about ${money(week.per_day)} a day`
+              }
+            />
+          ) : null}
+          {year.previous !== null && year.change !== null ? (
+            <Readout
+              label="Same days last year"
+              value={money(year.previous)}
+              tone="text"
+              sub={`now ${versus(year.change, "that", year.percent)}`}
+            />
+          ) : null}
+          {budget ? (
+            <Readout
+              label="Saved this term"
+              value={money(budget.saved, { signed: true })}
+              tone={budget.saved >= 0 ? "sage" : "coral"}
+              sub={`over ${plural(budget.weeks_done, "finished week")}`}
+            />
+          ) : null}
+        </div>
+      ) : null}
       {week ? (
         <PaceMeter
           value={week.spent}
@@ -270,8 +284,8 @@ export function Overview() {
                 </span>
                 <span className="grow">{signal.text}</span>
                 {to ? (
-                  <a className="link small" {...linkTo(to)}>
-                    Review →
+                  <a className="link small" {...linkTo(to.to)}>
+                    {to.label} →
                   </a>
                 ) : null}
               </div>
@@ -283,7 +297,7 @@ export function Overview() {
       {data.has_transactions ? (
         <>
           <div className="spread">
-            <Card title="Day by day" hint="click a day to see it">
+            <Card title="Day by day">
               <DotCalendar
                 days={data.days}
                 today={data.is_current ? data.as_of : null}
@@ -308,9 +322,9 @@ export function Overview() {
           </div>
 
           <div className="spread">
-            {data.bills.length ? (
-              <Card title="Bills" hint="this month">
-                <BillList bills={data.bills} />
+            {data.bills.length || data.upcoming.length ? (
+              <Card title={data.bills.length ? "Bills" : "Coming up"} hint={billsSummary(data.bill_totals)}>
+                <BillList bills={data.bills} upcoming={data.upcoming} />
               </Card>
             ) : null}
             <Card
@@ -348,15 +362,35 @@ export function Overview() {
             </Card>
           </div>
 
-          {data.monthly.length > 1 ? (
-            <Card title="Month by month" hint="net spending, last 12 months">
-              <DotColumns
-                data={data.monthly}
-                highlight={data.month}
-                average={data.monthly.map((item) => item.rolling_3)}
-              />
-            </Card>
-          ) : null}
+          {/* Weeks and months side by side, drawn and read the same way. */}
+          <div className="spread">
+            {data.weekly.length > 1 ? (
+              <Card title="Week by week">
+                <DotColumns
+                  data={weekColumns(data.weekly)}
+                  unit="week"
+                  highlight={data.is_current ? data.weekly.find((item) => item.end >= data.as_of)?.week : undefined}
+                  average={data.weekly.map((item) => item.rolling_4)}
+                  averageLabel="4-week average"
+                  onPick={(picked) => {
+                    const week = data.weekly.find((item) => item.week === picked);
+                    if (week) navigate(`/transactions?start=${week.week}&end=${week.end}`);
+                  }}
+                />
+              </Card>
+            ) : null}
+            {data.monthly.length > 1 ? (
+              <Card title="Month by month">
+                <DotColumns
+                  data={monthColumns(data.monthly)}
+                  highlight={data.month}
+                  average={data.monthly.map((item) => item.rolling_3)}
+                  onPick={(picked) => setParams({ month: picked })}
+                  pickable={data.months}
+                />
+              </Card>
+            ) : null}
+          </div>
         </>
       ) : null}
     </div>

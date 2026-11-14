@@ -14,6 +14,7 @@ one-off purchases are tracked beside the line, never inside it.
 from __future__ import annotations
 
 import calendar
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any
@@ -30,6 +31,8 @@ from .university_presets import (
 CADENCES = ("Monthly", "Each quarter", "Once")
 HOUSING = tuple(UCLA_2026["housing"])
 PAID_WINDOW = timedelta(days=30)
+# Payments reaching this share of a bill's amount settle it.
+PAID_SHARE = 0.9
 
 
 def monday(day: date) -> date:
@@ -331,25 +334,46 @@ def _bill_dues(bill: Bill, period: Period) -> list[date]:
     return dues
 
 
+def _monthly_due(month: date, due_day: int) -> date:
+    return month.replace(day=min(due_day, calendar.monthrange(month.year, month.month)[1]))
+
+
+def _paid_window(bill: Bill, due: date) -> tuple[date, date]:
+    """The days whose payments count toward this due date.
+
+    A monthly bill takes the payments nearer to this due date than to the one
+    before or after, so rent paid on the 30th settles the bill due on the 1st.
+    """
+    if bill.cadence != "Monthly":
+        return due - PAID_WINDOW, due + PAID_WINDOW
+    first = due.replace(day=1)
+    before = _monthly_due((first - timedelta(days=1)).replace(day=1), bill.due_day)
+    after = _monthly_due((first + timedelta(days=32)).replace(day=1), bill.due_day)
+    return (
+        before + timedelta(days=(due - before).days // 2 + 1),
+        due + timedelta(days=(after - due).days // 2),
+    )
+
+
 def _bills(
     settings: BudgetSettings, spending: list[dict[str, Any]], period: Period, as_of: date
 ) -> list[dict[str, Any]]:
-    result = []
+    """Every due date in the period: what needs attention first, settled ones last."""
+    result: list[dict[str, Any]] = []
     for bill in settings.bills:
         for due in _bill_dues(bill, period):
-            if bill.cadence == "Monthly":
-                start = due.replace(day=1)
-                end = due.replace(day=calendar.monthrange(due.year, due.month)[1])
-            else:
-                start, end = due - PAID_WINDOW, due + PAID_WINDOW
+            start, end = _paid_window(bill, due)
             paid = sum(
                 net(row)
                 for row in spending
                 if row["category"] in bill.categories
                 and start.isoformat() <= _day(row) <= min(end, as_of).isoformat()
             )
-            if paid > 0 and paid >= bill.amount_cents:
+            # Tax and rounding move a bill by cents, so near the amount is paid.
+            if paid > 0 and paid >= bill.amount_cents * PAID_SHARE:
                 status = "paid"
+            elif paid > 0:
+                status = "part"
             elif due < as_of:
                 status = "late"
             elif due <= as_of + timedelta(days=7):
@@ -365,9 +389,53 @@ def _bills(
                     "status": status,
                     "categories": list(bill.categories),
                     "cadence": bill.cadence,
+                    "window_start": start,
+                    "window_end": end,
                 }
             )
-    return sorted(result, key=lambda item: item["due"])
+    # An unpaid due date before one that is already paid was most likely paid
+    # too and never recorded, so it stops asking for attention.
+    settled: dict[str, date] = {}
+    for item in result:
+        if item["status"] == "paid":
+            settled[item["name"]] = max(item["due"], settled.get(item["name"], item["due"]))
+    for item in result:
+        if item["status"] == "late" and item["due"] < settled.get(item["name"], date.min):
+            item["status"] = "missed"
+    order = {"late": 0, "part": 0, "soon": 1, "upcoming": 1, "paid": 2, "missed": 2}
+    return sorted(
+        result,
+        key=lambda item: (
+            order[item["status"]],
+            -item["due"].toordinal() if order[item["status"]] == 2 else item["due"].toordinal(),
+        ),
+    )
+
+
+def bill_totals(bills: list[dict[str, Any]]) -> dict[str, int]:
+    """How many due dates are settled and what is still to pay on the rest."""
+    return {
+        "count": len(bills),
+        "paid": sum(bill["status"] == "paid" for bill in bills),
+        "outstanding": sum(
+            max(0, bill["amount"] - bill["paid"])
+            for bill in bills
+            if bill["status"] not in ("paid", "missed")
+        ),
+    }
+
+
+def period_kind_lookup() -> Callable[[date], str | None]:
+    """Name the kind of period a day falls in: quarter, break or summer.
+
+    Days outside the published calendar have no kind.
+    """
+    periods = school_periods()
+
+    def kind(day: date) -> str | None:
+        return next((p.kind for p in periods if p.start <= day <= p.end), None)
+
+    return kind
 
 
 def term_budget(
@@ -449,6 +517,7 @@ def term_budget(
         if r["spending_treatment"] == "Irregular"
         and period.start.isoformat() <= _day(r) <= period.end.isoformat()
     ]
+    bills = _bills(settings, spending, period, as_of)
     periods = school_periods()
     names = [p.name for p in periods]
     index = names.index(period.name) if period.name in names else None
@@ -500,7 +569,8 @@ def term_budget(
             "line_to_date": weekly * sum(w["state"] == "past" for w in weeks),
             "weeks_done": sum(w["state"] == "past" for w in weeks),
         },
-        "bills": _bills(settings, spending, period, as_of),
+        "bills": bills,
+        "bill_totals": bill_totals(bills),
         "big_stuff": sorted(big_stuff, key=_day, reverse=True),
         "year": year,
     }

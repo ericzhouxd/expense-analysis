@@ -204,7 +204,7 @@ function KeywordRules({ rules, categories }: { rules: { keyword: string; categor
   }
 
   return (
-    <Card title="Auto-category rules" hint="a word in the description picks the category">
+    <Card title="Auto-category rules">
       <form
         className="row"
         onSubmit={async (event) => {
@@ -274,7 +274,6 @@ export function Settings() {
       <div className="page-head">
         <div>
           <h1>Settings</h1>
-          <p>Categories, rules and where everything is stored.</p>
         </div>
       </div>
 
@@ -295,7 +294,7 @@ export function Settings() {
 
       {info.data ? (
         <div className="spread">
-          <Card title="Privacy" hint="everything stays on this computer">
+          <Card title="Privacy">
             <div>
               {[
                 { label: "Server answers only on", value: `${info.data.binding} (this computer)` },
@@ -323,7 +322,7 @@ export function Settings() {
               only send from this app.
             </p>
           </Card>
-          <Card title="School calendar" hint="UCLA quarters used for weeks and terms">
+          <Card title="School calendar">
             <div className="table-wrap">
               <table className="table">
                 <thead>

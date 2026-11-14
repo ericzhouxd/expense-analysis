@@ -20,11 +20,30 @@ export function compactMoney(cents: number): string {
   return `${sign}$${Math.round(dollars)}`;
 }
 
+/** Whole dollars in full, for estimates where cents would claim too much: $1,240. */
+export function wholeMoney(cents: number): string {
+  const sign = cents < 0 ? MINUS : "";
+  return `${sign}$${Math.round(Math.abs(cents) / 100).toLocaleString("en-US")}`;
+}
+
 export function percent(value: number | null | undefined, signed = true): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   const text = `${Math.abs(value).toFixed(1)}%`;
   if (!signed) return text;
   return value < 0 ? `${MINUS}${text}` : value > 0 ? `+${text}` : text;
+}
+
+/**
+ * A change against an earlier figure, worded the same way wherever it appears:
+ * "▲ $12.00 (8.0%) more than Oct 1–14".
+ */
+export function versus(change: number, than: string, percentChange?: number | null): string {
+  if (change === 0) return `same as ${than}`;
+  const share =
+    percentChange === null || percentChange === undefined || !Number.isFinite(percentChange)
+      ? ""
+      : ` (${percent(Math.abs(percentChange), false)})`;
+  return `${change > 0 ? "▲" : "▼"} ${money(Math.abs(change))}${share} ${change > 0 ? "more" : "less"} than ${than}`;
 }
 
 /** Parse what someone typed as dollars into positive integer cents, or null. */
