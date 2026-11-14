@@ -122,9 +122,19 @@ export interface BillDue {
   amount: number;
   due: string;
   paid: number;
-  status: "paid" | "late" | "soon" | "upcoming";
+  /** `part`: something was paid but not the amount; `missed`: unpaid, yet a later due date is paid. */
+  status: "paid" | "part" | "late" | "soon" | "upcoming" | "missed";
   categories: string[];
   cadence: Cadence;
+  /** The days whose payments count toward this due date. */
+  window_start: string;
+  window_end: string;
+}
+
+export interface BillTotals {
+  count: number;
+  paid: number;
+  outstanding: number;
 }
 
 export type Cadence = "Monthly" | "Each quarter" | "Once";
@@ -147,10 +157,13 @@ export interface CurrentWeek extends Week {
   days: { date: string; spent: number; future: boolean }[];
 }
 
+/** A banner for something that needs doing; `action` says where to fix it. */
 export interface Signal {
   tone: "up" | "warn" | "ok" | "info";
   text: string;
-  action?: "uncategorized" | "treatments" | "budgets";
+  action?: "uncategorized" | "treatments" | "bills" | "duplicates";
+  /** Transactions filter for the `duplicates` action. */
+  filter?: { start: string; end: string; q: string };
 }
 
 export interface Overview {
@@ -177,9 +190,13 @@ export interface Overview {
   days: { date: string; spent: number; count: number; future: boolean }[];
   categories: { category: string; spent: number }[];
   bills: BillDue[];
+  bill_totals: BillTotals;
+  /** Repeating charges expected in the next two weeks that no bill covers. */
+  upcoming: { name: string; amount: number; due: string; frequency: string }[];
   ticker: { label: string; items: { name: string; amount: number; refund: boolean }[]; total: number };
   recent: Transaction[];
   monthly: { month: string; spent: number; rolling_3: number }[];
+  weekly: { week: string; end: string; label: string; spent: number; rolling_4: number }[];
   signals: Signal[];
 }
 
@@ -211,9 +228,30 @@ export interface Insights {
   cash_flow: { month: string; income: number; expenses: number; refunds: number; net: number }[];
   terms: { period: string; kind: PeriodKind; start: string; spent: number; weeks: number }[];
   monthly: { month: string; spent: number; rolling_3: number; rolling_6: number; rolling_12: number }[];
+  forecast: Forecast;
   savings: { income: number; net_outflow: number; savings: number; rate: number | null };
   year: SchoolYear | null;
   duplicate_groups: number;
+}
+
+/** One month of the spending forecast; `partial` is the month in progress. */
+export interface ForecastMonth {
+  month: string;
+  expected: number;
+  low: number;
+  high: number;
+  spent: number;
+  partial: boolean;
+}
+
+/** `months` is empty until there are two complete months to learn from. */
+export interface Forecast {
+  level: number;
+  typical_miss: number | null;
+  history_months: number;
+  /** What a week of quarter, break or summer days costs, in cents. */
+  weekly_rates: Partial<Record<PeriodKind, number>>;
+  months: ForecastMonth[];
 }
 
 export type PeriodKind = "quarter" | "break" | "summer" | "month";
@@ -286,6 +324,9 @@ export interface Budget {
     weeks_done: number;
   };
   bills: BillDue[];
+  bill_totals: BillTotals;
+  /** This week against the same weekdays of last week; null outside the current period. */
+  comparison: Comparison | null;
   big_stuff: Transaction[];
   year: SchoolYear | null;
   periods: { name: string; kind: PeriodKind; start: string; end: string }[];

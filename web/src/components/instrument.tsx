@@ -24,7 +24,7 @@ export function useReducedMotion(): boolean {
   );
 }
 
-/** The glass-covered LED panel: the glare follows the pointer and it tilts slightly. */
+/** The glass-covered LED panel; it tilts slightly toward the pointer. */
 export function Housing({
   children,
   label,
@@ -40,27 +40,35 @@ export function Housing({
 }) {
   const reduced = useReducedMotion();
   const ref = useRef<HTMLDivElement>(null);
+  const frame = useRef(0);
+  const pointer = useRef({ x: 0, y: 0 });
 
+  // The panel tilts slightly toward the pointer; one style write per frame.
   function move(event: MouseEvent<HTMLDivElement>) {
-    const element = ref.current;
-    if (!element) return;
-    const box = element.getBoundingClientRect();
-    const x = (event.clientX - box.left) / box.width;
-    const y = (event.clientY - box.top) / box.height;
-    element.style.setProperty("--gx", `${(x * 100).toFixed(1)}%`);
-    element.style.setProperty("--gy", `${(y * 100).toFixed(1)}%`);
-    if (tilt && !reduced) {
+    pointer.current = { x: event.clientX, y: event.clientY };
+    if (frame.current) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0;
+      const element = ref.current;
+      if (!element) return;
+      const box = element.getBoundingClientRect();
+      const x = (pointer.current.x - box.left) / box.width;
+      const y = (pointer.current.y - box.top) / box.height;
       element.style.setProperty("--rx", `${((0.5 - y) * 2.4).toFixed(2)}deg`);
       element.style.setProperty("--ry", `${((x - 0.5) * 3.2).toFixed(2)}deg`);
-    }
+    });
   }
 
   function leave() {
-    for (const name of ["--gx", "--gy", "--rx", "--ry"]) ref.current?.style.removeProperty(name);
+    cancelAnimationFrame(frame.current);
+    frame.current = 0;
+    for (const name of ["--rx", "--ry"]) ref.current?.style.removeProperty(name);
   }
 
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+
   return (
-    <div ref={ref} className={`housing ${className}`} onMouseMove={move} onMouseLeave={leave}>
+    <div ref={ref} className={`housing ${className}`} onMouseMove={tilt && !reduced ? move : undefined} onMouseLeave={leave}>
       <span className="screw tl" aria-hidden="true" />
       <span className="screw tr" aria-hidden="true" />
       <span className="screw bl" aria-hidden="true" />
@@ -172,7 +180,7 @@ export function Readout({
 }: {
   label: string;
   value: string;
-  tone?: "coral" | "sage" | "text";
+  tone?: "coral" | "sage" | "amber" | "text";
   sub?: string;
 }) {
   return (

@@ -220,7 +220,19 @@ def test_overview_shows_this_weeks_line_and_the_month(client: TestClient, seeded
     phone = next(b for b in data["bills"] if b["due"] == "2026-11-02")
     assert phone["name"] == "Phone"
     assert phone["status"] == "paid"
-    assert any("vs Oct 1–9" in signal["text"] for signal in data["signals"])
+    assert phone["window_start"] <= "2026-11-02" <= phone["window_end"]
+    # October's phone bill was never recorded; November's payment retires it.
+    assert [(b["due"], b["status"]) for b in data["bills"]] == [("2026-11-02", "paid")]
+    assert data["bill_totals"] == {"count": 1, "paid": 1, "outstanding": 0}
+    month = data["comparisons"]["month"]
+    assert (month["prior_start"], month["prior_end"]) == ("2026-10-01", "2026-10-09")
+    assert month["change"] == data["spent"] - 52_00
+    assert [w["week"] for w in data["weekly"]][-2:] == ["2026-11-02", "2026-11-09"]
+    assert data["weekly"][-1]["label"] == "Week 7"
+    assert data["weekly"][-1]["spent"] == week["spent"]
+    # Nothing here needs doing: categories are sorted except the unreviewed ones.
+    assert [signal.get("action") for signal in data["signals"]] == ["treatments"]
+    assert data["upcoming"] == []
     every = client.get("/api/overview", params={"scope": "all"}).json()
     assert every["spent"] == data["spent"] + 35_00
 
@@ -243,11 +255,42 @@ def test_empty_ledger_overview_is_predictable(client: TestClient) -> None:
     assert data["monthly"] == []
 
 
+def test_insights_forecast_is_integer_cents(client: TestClient, seeded: Database) -> None:
+    for month in (8, 9):
+        seeded.add_transaction(_draft(date(2026, month, 3), "Ralphs groceries", 52_00, "Food"))
+    forecast = client.get("/api/insights", params={"scope": "all"}).json()["forecast"]
+    assert forecast["history_months"] == 3
+    assert [item["month"] for item in forecast["months"]] == [
+        "2026-11",
+        "2026-12",
+        "2027-01",
+        "2027-02",
+    ]
+    this_month, next_month = forecast["months"][:2]
+    assert this_month["partial"] is True
+    assert this_month["spent"] == 124_85
+    assert this_month["low"] >= this_month["spent"]
+    # November to January are mostly quarter days, which the calendar knows about.
+    assert set(forecast["weekly_rates"]) == {"quarter", "summer"}
+    assert next_month["low"] <= next_month["expected"] <= next_month["high"]
+    assert all(type(next_month[key]) is int for key in ("expected", "low", "high", "spent"))
+
+
 def test_insights_and_budget_payloads(client: TestClient, seeded: Database) -> None:
     insights = client.get("/api/insights").json()
     assert insights["cash_flow"][-1]["month"] == "2026-11"
     assert insights["year"]["label"] == "2026–27"
     assert insights["terms"][-1]["period"] == "Fall quarter 2026"
+    # One complete month is not enough to predict from.
+    assert insights["forecast"]["months"] == []
+    assert insights["forecast"]["history_months"] == 1
+    # The trend and forecast look from today whichever month is open.
+    october = client.get("/api/insights", params={"month": "2026-10"}).json()
+    assert october["month"] == "2026-10"
+    assert [item["month"] for item in october["monthly"]] == ["2026-10", "2026-11"]
+    assert october["forecast"] == insights["forecast"]
+    overview = client.get("/api/overview", params={"month": "2026-10"}).json()
+    assert [item["month"] for item in overview["monthly"]] == ["2026-10", "2026-11"]
     budget = client.get("/api/budget").json()
     assert budget["period"]["name"] == "Fall quarter 2026"
     assert budget["period"]["is_current"] is True

@@ -118,7 +118,8 @@ def test_bills_and_big_stuff_stay_outside_the_line():
     assert [r["id"] for r in result["big_stuff"]] == ["flight"]
     bills = {(b["name"], b["due"]): b for b in result["bills"]}
     assert bills["Rent", date(2026, 11, 1)]["status"] == "paid"
-    assert bills["Rent", date(2026, 10, 1)]["status"] == "late"
+    # October's rent shows no payment, but November's is paid, so it stops nagging.
+    assert bills["Rent", date(2026, 10, 1)]["status"] == "missed"
     assert bills["Rent", date(2026, 12, 1)]["status"] == "upcoming"
     assert bills["Phone", date(2026, 11, 20)]["status"] == "upcoming"
     assert bills["Tuition", date(2026, 9, 21)]["status"] == "paid"
@@ -207,3 +208,45 @@ def test_settings_validate_roundtrip_and_convert_a_month_plan(tmp_path):
         ("Rent", "Monthly", None),
         ("Tuition", "Once", date(2026, 12, 1)),
     ]
+
+
+def test_bill_payments_settle_the_nearest_due_date_and_allow_for_cents():
+    settings = BudgetSettings(
+        bills=(
+            Bill("Rent", 145000, ("Rent",), "Monthly", due_day=1),
+            Bill("Phone", 3500, ("Phone",), "Monthly", due_day=20),
+            Bill("Utilities", 6000, ("Utilities",), "Monthly", due_day=15),
+        )
+    )
+    rows = [
+        # Paid two days early, in the month before the due date.
+        row("rent", "2026-10-30", 145000, "Rent"),
+        # A few cents under the amount entered for the bill.
+        row("phone", "2026-10-19", 3487, "Phone"),
+        # Well under the estimate: something was paid, but not the whole amount.
+        row("power", "2026-10-14", 3100, "Utilities"),
+    ]
+    result = term_budget(settings, rows, TODAY)
+    bills = {(b["name"], b["due"]): b for b in result["bills"]}
+    assert bills["Rent", date(2026, 11, 1)]["status"] == "paid"
+    assert bills["Rent", date(2026, 10, 1)]["status"] == "missed"
+    assert bills["Phone", date(2026, 10, 20)]["status"] == "paid"
+    assert bills["Utilities", date(2026, 10, 15)]["status"] == "part"
+    rent = bills["Rent", date(2026, 11, 1)]
+    assert (rent["window_start"], rent["window_end"]) == (date(2026, 10, 17), date(2026, 11, 16))
+    # What needs attention comes first; settled due dates sink to the bottom.
+    statuses = [b["status"] for b in result["bills"]]
+    assert statuses.index("part") < statuses.index("upcoming") < statuses.index("paid")
+    assert result["bill_totals"]["paid"] == 2
+    # The rest of October's utilities, then November's utilities and phone and December's rent.
+    assert result["bill_totals"]["outstanding"] == (6000 - 3100) + 6000 + 3500 + 145000
+
+
+def test_period_kinds_follow_the_calendar():
+    from expense_analysis.term_budget import period_kind_lookup
+
+    kind = period_kind_lookup()
+    assert kind(date(2026, 11, 9)) == "quarter"
+    assert kind(date(2026, 12, 20)) == "break"
+    assert kind(date(2026, 7, 15)) == "summer"
+    assert kind(date(2024, 1, 1)) is None

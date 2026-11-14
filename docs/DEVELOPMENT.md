@@ -179,10 +179,14 @@ Budget calculation (`term_budget.py`):
 - Each Mon–Sun week is compared with the line independently. Finished weeks
   report `saved = line − net everyday spent`, which can be negative. Nothing
   rolls over into the next week.
-- A bill counts as paid once net Bills spending in its categories reaches its
-  amount: within the due date's calendar month for Monthly bills, within 30 days
-  either side of the due date otherwise. It is `soon` within 7 days of its due
-  date and `late` after it while unpaid.
+- A bill counts as `paid` once net Bills spending in its categories reaches
+  `PAID_SHARE` (90%) of its amount, and `part` when something smaller was paid.
+  A Monthly bill takes the payments nearer its due date than the due dates
+  either side (`_paid_window`); other bills take 30 days either side. Unpaid, it
+  is `soon` within 7 days of its due date, `late` after it, and `missed` once a
+  later due date of the same bill is paid, so an old gap stops asking for
+  attention. Bills are sorted with what needs attention first, and
+  `bill_totals` counts what is paid and what is still to go.
 
 The published UCLA off-campus totals exceed their displayed component sum by $1.
 The reference includes an explicit $1 reconciliation line instead of silently
@@ -194,7 +198,15 @@ journaling.
 
 ## UI conventions
 - Dark instrument panel: near-black housing, amber/lime LED readouts, square corners.
-- One primary number per page (the `HeroNumber` in the glass `Housing`).
+- The `HeroNumber` in the glass `Housing` is what has been spent: this week and
+  this month side by side on the Overview, this week on Budgets. What is left is
+  a readout beneath it. A figure compared with an earlier stretch is worded by
+  `versus` in `web/src/lib/format.ts` ("▲ $12.00 (8.0%) more than Oct 1–14")
+  wherever it appears.
+- Cards carry no captions describing themselves. A card hint is for a figure
+  (a total, a count), and how-to text belongs in an empty state.
+- Banners (`_signals` in `server/views.py`) are only for things that can be
+  acted on, and each carries the `action` that fixes it.
 - Color roles: lime for primary actions and healthy pace, amber for caution, coral
   for overage or errors, sage for positive status. Category colors come from
   `web/src/lib/glyphs.ts`.
@@ -210,6 +222,27 @@ Month-over-month and year-over-year windows use `models.comparable_day`: a parti
 month compares the same days (clamped to a shorter month), and a complete month
 compares with the other month in full. Format money for display with
 `models.format_dollars` (U+2212 minus; `signed=True` for deltas).
+
+`spending_forecast` projects the month in progress and the months after it from
+an exponentially weighted average of the complete months (`FORECAST_SMOOTHING`).
+Given `kind_of` (a day → `quarter`/`break`/`summer` lookup such as
+`term_budget.period_kind_lookup()`), it also learns how each kind of day
+compares with an average day, shrunk toward 1 for kinds seen on few days
+(`FORECAST_SHRINK_DAYS`), and scales each month by the mix of days it holds;
+`weekly_rates` reports what a week of each kind costs. Its range is the mean
+absolute error of replaying that forecast one month ahead over the recorded
+months, using only what was known before each. The trend and the forecast
+always look from today, whichever month a page has open;
+`monthly_spending(through=today)` and `weekly_spending(through=today)` keep a
+month or week with nothing spent yet on the chart.
+
+Column charts (`DotColumns`, `WeekBars`) share `usePreview` in
+`web/src/components/charts.tsx`: hover or focus describes a column in the
+readout bar, a click or Enter picks it, a first tap previews and a second picks,
+and arrow keys move between columns. `DotColumns` draws at one unit per pixel and
+shows only as many columns as fit, so its labels never overlap. It takes generic
+`Column`s; `monthColumns` and `weekColumns` build them, which is how weeks and
+months are drawn the same way.
 
 Category keyword rules use `models.keyword_matches` (ASCII word edges plus plural
 endings; other scripts match as substrings). `web/src/lib/keyword.ts` mirrors it
