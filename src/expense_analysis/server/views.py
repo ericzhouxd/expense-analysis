@@ -17,37 +17,52 @@ import numpy as np
 import pandas as pd
 
 from ..analytics import (
+    LARGEST_DAYS,
     cash_flow_by_month,
+    frequent_entries,
+    largest_purchases,
     monthly_spending,
-    recurring_transactions,
     savings_summary,
-    spending_anomalies,
     spending_drivers,
     spending_forecast,
     transactions_frame,
     weekly_spending,
 )
-from ..categories import keyword_rules, suggestion_data
-from ..choices import choice_options, unused_choices
+from ..autopilot import AutoBudget
+from ..categories import keyword_rules
+from ..choices import choice_options, entry_defaults, unused_choices
+from ..coa_outlook import coa_outlook
 from ..config import DATABASE_PATH, LOCAL_CONFIG_PATH, TRANSACTION_TYPES, AppConfig
 from ..database import Database
 from ..import_export import ImportPreview, decode_csv, header_key
-from ..models import comparable_day, format_dollars, month_after, normalize_text
+from ..models import (
+    comparable_day,
+    format_dollars,
+    month_after,
+    normalize_text,
+)
+from ..patterns import coa_part
+from ..replay import SmartBudget, smart_budget
 from ..spending_summary import comparison, previous_year, spending_summary
 from ..spending_treatment import CATEGORY_DEFAULT, TREATMENTS, classify_spending
 from ..term_budget import (
     CADENCES,
     HOUSING,
+    Bill,
     BudgetSettings,
-    bill_totals,
+    next_due,
     period_for,
     period_kind_lookup,
     period_totals,
     school_periods,
     term_budget,
-    weekly_line,
 )
-from ..university_presets import UCLA_CALENDAR_SOURCE, UCLA_QUARTERS
+from ..university_presets import (
+    COA_PARTS,
+    UCLA_2026,
+    UCLA_CALENDAR_SOURCE,
+    UCLA_QUARTERS,
+)
 
 Row = dict[str, Any]
 CHOICE_KINDS = ("category", "account", "payment_method")
@@ -89,8 +104,26 @@ def to_cents(value: Any) -> int:
     return 0 if math.isnan(number) else int(round(number * 100))
 
 
+def whole_dollars(cents: int) -> str:
+    """For estimates, where cents would claim too much."""
+    return f"${round(cents / 100):,}"
+
+
 def short_date(day: date) -> str:
     return f"{day:%b} {day.day}"
+
+
+def learned_budget(
+    database: Database, config: AppConfig, rows: list[Row], today: date
+) -> SmartBudget:
+    """The budget the ledger itself describes, with the student's own choices on top."""
+    return smart_budget(
+        database.get_budget_settings(),
+        database.get_spending_rules(),
+        rows,
+        today,
+        config.fixed_categories,
+    )
 
 
 def signed_amount(row: Row) -> int:
@@ -111,7 +144,6 @@ def serialize_row(row: Row) -> Row:
         "created_at",
         "updated_at",
         "spending_treatment",
-        "treatment_review",
     )
     data = {key: row[key] for key in keys if key in row}
     data["transaction_date"] = str(row["transaction_date"])[:10]
@@ -141,17 +173,14 @@ def _in_scope(frame: pd.DataFrame, everyday: bool) -> pd.DataFrame:
     return frame[frame["spending_treatment"].eq("Everyday")]
 
 
-def _vocabulary(database: Database, config: AppConfig) -> Row:
+def _vocabulary(database: Database) -> Row:
     rows = database.list_transactions()
     names: dict[str, Counter[str]] = defaultdict(Counter)
     for row in rows:
         merchant = str(row["merchant"]).strip()
         if merchant:
             names[normalize_text(merchant)][merchant] += 1
-    suggestions = suggestion_data(database, config)
     return {
-        "rules": [[keyword, category] for keyword, category in suggestions["rules"]],
-        "merchants": suggestions["merchants"],
         "merchant_names": {key: counts.most_common(1)[0][0] for key, counts in names.items()},
     }
 
@@ -165,36 +194,42 @@ def bootstrap(database: Database, config: AppConfig, today: date) -> Row:
         ],
         "accounts": choice_options(database, config, "account"),
         "payment_methods": choice_options(database, config, "payment_method"),
-        "default_account": config.default_account,
-        "default_payment_method": config.default_payment_method,
+        "defaults": entry_defaults(config),
         "transaction_types": list(TRANSACTION_TYPES),
         "treatments": list(TREATMENTS),
         "transaction_count": database.count_transactions(),
-        **_vocabulary(database, config),
+        "frequent": [
+            payload(item) for item in frequent_entries(database.list_transactions(), today)
+        ],
+        **_vocabulary(database),
     }
 
 
 def _signals(
     *,
-    summary: Row,
     bills: list[Row],
+    coa: Row | None,
     month_rows: list[Row],
     rows: list[Row],
     duplicates: list[Row],
 ) -> list[Row]:
     """Banners for things that need doing, most pressing first.
 
-    Comparisons and upcoming charges are not banners: the panel and the Coming up
-    card show those. Each banner names where to fix it.
+    Comparisons are not banners: the panel shows those. Each shows a short label and
+    value and links to where it is fixed; ``text`` says it in full for screen readers.
     """
     signals: list[Row] = []
     # A bill without a category can never show a payment, so it is not news.
-    late = [bill for bill in bills if bill["status"] == "late" and bill["categories"]]
+    missing = [bill for bill in bills if bill["status"] == "late" and bill["categories"]]
+    late = [bill for bill in missing if not bill["learned"]]
+    expected = [bill for bill in missing if bill["learned"]]
     if len(late) == 1:
         bill = late[0]
         signals.append(
             {
                 "tone": "up",
+                "label": "No payment",
+                "value": f"{bill['name']} · {short_date(bill['due'])}",
                 "text": f"{bill['name']} ({format_dollars(bill['amount'])}) was due "
                 f"{short_date(bill['due'])} and no payment shows up.",
                 "action": "bills",
@@ -205,8 +240,46 @@ def _signals(
         signals.append(
             {
                 "tone": "up",
+                "label": "No payment",
+                "value": names,
                 "text": f"{len(late)} bills are past due with no payment showing: {names}.",
                 "action": "bills",
+            }
+        )
+    if expected:
+        names = ", ".join(dict.fromkeys(str(bill["name"]) for bill in expected))
+        dues = " and ".join(dict.fromkeys(short_date(bill["due"]) for bill in expected))
+        signals.append(
+            {
+                "tone": "warn",
+                "label": "Not seen yet",
+                "value": f"{names} · {dues}",
+                "text": f"Going by earlier payments, {names} was expected around {dues}. "
+                "Nothing like it is recorded yet.",
+                "action": "bills",
+            }
+        )
+    if coa and coa["ready"] and coa["verdict"] != "under" and not coa["complete"]:
+        over = coa["verdict"] == "over"
+        weekly = coa["weekly"]
+        signals.append(
+            {
+                "tone": "up" if over else "warn",
+                "label": "Cost of attendance",
+                "value": f"{whole_dollars(abs(coa['margin']))} "
+                f"{'under' if coa['margin'] >= 0 else 'over'}",
+                "text": (
+                    f"Everything together is heading for about {whole_dollars(abs(coa['margin']))} "
+                    f"{'under' if coa['margin'] >= 0 else 'over'} {coa['school']}'s cost of "
+                    f"attendance{'' if over else ', too close to call'}. "
+                    + (
+                        f"About {whole_dollars(weekly['safe'])} a week of everyday spending "
+                        "keeps it there."
+                        if weekly["possible"]
+                        else "Costs outside everyday spending already pass that."
+                    )
+                ),
+                "action": "coa",
             }
         )
     unknown = sum(row["category"] == "Uncategorized" for row in month_rows)
@@ -214,22 +287,11 @@ def _signals(
         signals.append(
             {
                 "tone": "warn",
+                "label": "No category",
+                "value": str(unknown),
                 "text": f"{unknown} entr{'y' if unknown == 1 else 'ies'} this month need"
                 f"{'s' if unknown == 1 else ''} a category.",
                 "action": "uncategorized",
-            }
-        )
-    review = summary["review_count"]
-    if review:
-        one = review == 1
-        signals.append(
-            {
-                "tone": "warn",
-                "text": f"{review} purchase{'' if one else 's'} this month "
-                f"{'is' if one else 'are'} in a category you haven't marked as everyday, "
-                f"a bill or big stuff. Until you do, {'it counts' if one else 'they count'} "
-                "against the weekly line.",
-                "action": "treatments",
             }
         )
     if duplicates:
@@ -238,6 +300,8 @@ def _signals(
         first = by_id.get(str(duplicates[0]["transaction_ids"]).split(",")[0])
         signal: Row = {
             "tone": "warn",
+            "label": "Duplicates",
+            "value": str(count),
             "text": f"{count} transaction{'' if count == 1 else 's'} "
             f"{'is' if count == 1 else 'are'} saved more than once with the same date, "
             "amount and description.",
@@ -274,15 +338,15 @@ def overview(
     database: Database, config: AppConfig, *, month: str | None, scope: str, today: date
 ) -> Row:
     rows = database.list_transactions()
-    settings = database.get_budget_settings()
-    rules = database.get_spending_rules()
+    smart = learned_budget(database, config, rows, today)
+    settings, rules = smart.auto.settings, smart.auto.rules
     months = reporting_months(rows, today)
     month = month if month in months else today.strftime("%Y-%m")
     first, as_of, last = month_bounds(month, today)
     is_current = (as_of.year, as_of.month) == (today.year, today.month)
     summary = spending_summary(settings, rows, as_of, rules)
     classified = classify_spending(rows, settings, rules)
-    term = term_budget(settings, rows, today, rules)
+    term = term_budget(settings, rows, today, rules, lines=smart.lines)
     everyday = scope != "all"
     scoped = [r for r in classified if not everyday or r["spending_treatment"] == "Everyday"]
 
@@ -340,23 +404,13 @@ def overview(
         {
             "week": week,
             "period": term["period"]["name"],
-            "saved": term["totals"]["saved"],
-            "weeks_done": term["totals"]["weeks_done"],
+            # What each finished week of the term came to against its line.
+            "weeks": [w["saved"] for w in term["weeks"] if w["saved"] is not None],
             "source": term["line"]["source"],
         }
         if week
         else None
     )
-    bills = (
-        [
-            bill
-            for bill in term["bills"]
-            if bill["due"].strftime("%Y-%m") == month or bill["status"] in ("late", "part", "soon")
-        ]
-        if is_current
-        else []
-    )
-
     month_rows = [r for r in classified if within(r, first, as_of)]
     purchases = [r for r in month_rows if r["transaction_type"] in ("expense", "refund")]
     ticker_rows = (
@@ -373,27 +427,6 @@ def overview(
     # whichever month is open.
     monthly = monthly_spending(_in_scope(timeline, everyday), through=today)
     weekly = weekly_spending(_in_scope(timeline, everyday), through=today)
-    upcoming: list[Row] = []
-    if is_current and not frame.empty:
-        # Repeating charges due in the next two weeks that no bill already covers.
-        recurring = recurring_transactions(frame, as_of)
-        covered = settings.bill_categories if settings else {}
-        horizon = as_of + timedelta(days=14)
-        for _, item in recurring.sort_values("next_expected").iterrows():
-            if (
-                item["status"] == "Active"
-                and as_of < item["next_expected"] <= horizon
-                and item["category"] not in covered
-            ):
-                upcoming.append(
-                    {
-                        "name": item["merchant"],
-                        "amount": to_cents(item["average_amount"]),
-                        "due": item["next_expected"],
-                        "frequency": item["frequency"],
-                    }
-                )
-
     return payload(
         {
             "month": month,
@@ -406,7 +439,6 @@ def overview(
             "spent": spent,
             "month_spent": summary["month_spent"],
             "treatment_totals": summary["treatment_totals"],
-            "review_count": summary["review_count"],
             "budget": budget,
             "baseline": {"total": prior_total, "month": prior_month.strftime("%Y-%m")}
             if has_prior
@@ -418,9 +450,6 @@ def overview(
             },
             "days": days,
             "categories": categories,
-            "bills": bills,
-            "bill_totals": bill_totals(bills),
-            "upcoming": upcoming,
             "ticker": {
                 "label": "TODAY" if is_current else "LATEST",
                 "items": [
@@ -433,7 +462,18 @@ def overview(
                 ],
                 "total": sum(signed_amount(r) for r in ticker_rows),
             },
-            "recent": [serialize_row(r) for r in month_rows[:8]],
+            "recent": [serialize_row(r) for r in month_rows[:6]],
+            # A finished month shows its own; the one in progress looks back further,
+            # so the list isn't empty on the 1st.
+            "largest": [
+                serialize_row(r)
+                for r in largest_purchases(
+                    classified,
+                    as_of - timedelta(days=LARGEST_DAYS - 1) if is_current else first,
+                    as_of,
+                )
+            ],
+            "largest_days": LARGEST_DAYS if is_current else None,
             "monthly": [
                 {
                     "month": str(item["month"]),
@@ -453,8 +493,10 @@ def overview(
                 for _, item in weekly.tail(12).iterrows()
             ],
             "signals": _signals(
-                summary=summary,
                 bills=term["bills"] if is_current else [],
+                coa=coa_outlook(settings, rows, today, rules, smart.auto.habits)
+                if is_current
+                else None,
                 month_rows=month_rows,
                 rows=rows,
                 duplicates=database.duplicate_groups(),
@@ -467,8 +509,8 @@ def insights(
     database: Database, config: AppConfig, *, month: str | None, scope: str, today: date
 ) -> Row:
     rows = database.list_transactions()
-    settings = database.get_budget_settings()
-    rules = database.get_spending_rules()
+    smart = learned_budget(database, config, rows, today)
+    settings, rules = smart.auto.settings, smart.auto.rules
     months = reporting_months(rows, today)
     month = month if month in months else today.strftime("%Y-%m")
     _, as_of, _ = month_bounds(month, today)
@@ -483,8 +525,6 @@ def insights(
     # The trend and the forecast look from today, whichever month is open.
     timeline = _in_scope(timeline, everyday)
     drivers = spending_drivers(scoped, as_of) if not scoped.empty else pd.DataFrame()
-    recurring = recurring_transactions(frame, as_of) if not frame.empty else pd.DataFrame()
-    anomalies = spending_anomalies(scoped) if not scoped.empty else pd.DataFrame()
     cash = cash_flow_by_month(frame)
     terms = period_totals(
         [r for r in classified if not everyday or r["spending_treatment"] == "Everyday"], as_of
@@ -493,7 +533,7 @@ def insights(
     savings = savings_summary(frame)
     forecast = spending_forecast(timeline, today, kind_of=period_kind_lookup())
 
-    year = term_budget(settings, rows, as_of, rules)["year"]
+    year = term_budget(settings, rows, as_of, rules, lines=smart.lines)["year"]
     return payload(
         {
             "month": month,
@@ -510,30 +550,6 @@ def insights(
                     "percent": item["percent_change"],
                 }
                 for _, item in drivers.head(10).iterrows()
-            ],
-            "recurring": [
-                {
-                    "merchant": item["merchant"],
-                    "frequency": item["frequency"],
-                    "occurrences": item["occurrences"],
-                    "average": to_cents(item["average_amount"]),
-                    "interval_days": item["median_interval_days"],
-                    "last_seen": item["last_seen"],
-                    "next_expected": item["next_expected"],
-                    "status": item["status"],
-                }
-                for _, item in recurring.iterrows()
-            ],
-            "anomalies": [
-                {
-                    "date": item["transaction_date"],
-                    "description": item["description"],
-                    "category": item["category"],
-                    "amount": to_cents(item["amount"]),
-                    "typical": to_cents(item["typical_amount"]),
-                    "score": item["anomaly_score"],
-                }
-                for _, item in anomalies.iterrows()
             ],
             "cash_flow": [
                 {
@@ -589,34 +605,89 @@ def insights(
     )
 
 
-def treatment_table(
-    config: AppConfig, rows: list[Row], settings: BudgetSettings | None, rules: Row
-) -> list[Row]:
-    saved_rules = rules.get("categories", {})
-    bills = settings.bill_categories if settings else {}
-    categories = sorted(
-        set(config.categories) | {r["category"] for r in rows} | set(saved_rules) | set(bills)
-    )
-    table = []
-    for category in categories:
-        saved = saved_rules.get(category, "Commitments" if category in bills else None)
-        suggested = (
-            "Commitments"
-            if category in config.fixed_categories
-            else "Irregular"
-            if category.casefold() in ("flights", "flight", "airfare", "travel")
-            else "Everyday"
-        )
-        table.append({"category": category, "treatment": saved or suggested, "saved": bool(saved)})
-    return table
+def treatment_table(auto: AutoBudget, rules: Row) -> list[Row]:
+    """How every category in use counts, whether the student decided it, and why if not."""
+    parts = rules.get("parts", {})
+    return [
+        {
+            "category": category,
+            "treatment": answer.treatment,
+            "pinned": answer.pinned,
+            "why": answer.why,
+            "part": coa_part(category, parts),
+            "part_pinned": category in parts,
+        }
+        for category, answer in sorted(auto.categories.items())
+    ]
+
+
+def _bill_out(bill: Bill, rows: list[Row], today: date) -> Row:
+    return {
+        "key": bill.key,
+        "name": bill.name,
+        "amount_cents": bill.amount_cents,
+        "categories": list(bill.categories),
+        "cadence": bill.cadence,
+        "due_day": bill.due_day,
+        "due": bill.due,
+        "pinned": bill.pinned,
+        "match": sorted(bill.match),
+        # A yearly charge is kept as its next date.
+        "yearly": bill.key.startswith("Yearly|"),
+        "why": bill.why,
+        "next_due": next_due(bill, rows, today),
+    }
+
+
+def _automatic(
+    smart: SmartBudget, saved: BudgetSettings | None, rows: list[Row], today: date
+) -> Row:
+    """What was worked out, where each answer came from and what can be changed."""
+    auto = smart.auto
+    options: dict[str, list[Row]] = {
+        "housing": [{"value": name, "text": name} for name in HOUSING],
+        "cohort": [{"value": name, "text": name} for name in UCLA_2026["cohorts"]],
+        "residency": [
+            {"value": True, "text": "Nonresident"},
+            {"value": False, "text": "California resident"},
+        ],
+        "insurance": [
+            {"value": True, "text": "UC SHIP"},
+            {"value": False, "text": "Waived UC SHIP"},
+        ],
+    }
+    return {
+        "facts": [
+            {
+                "key": fact.key,
+                "label": fact.label,
+                "value": fact.value,
+                "text": fact.text,
+                "source": fact.source,
+                "why": fact.why,
+                "auto_text": fact.auto_text,
+                "auto_why": fact.auto_why,
+                "options": options[fact.key],
+            }
+            for fact in auto.facts
+        ],
+        "bills": [_bill_out(bill, rows, today) for bill in auto.settings.bills],
+        "dismissed": [_bill_out(bill, rows, today) for bill in auto.dismissed],
+        "dismissed_keys": list(saved.dismissed) if saved else [],
+        "weekly_cents": auto.settings.weekly_cents,
+        "total_cents": saved.coa.total_cents if saved and saved.coa else None,
+        "big_cents": auto.big_cents,
+        "record": smart.record,
+    }
 
 
 def budget(database: Database, config: AppConfig, *, today: date, period: str | None) -> Row:
-    settings = database.get_budget_settings()
+    saved = database.get_budget_settings()
     rows = database.list_transactions()
-    rules = database.get_spending_rules()
+    smart = learned_budget(database, config, rows, today)
+    settings, rules = smart.auto.settings, smart.auto.rules
     day = date.fromisoformat(period) if period else None
-    result = term_budget(settings, rows, today, rules, day=day)
+    result = term_budget(settings, rows, today, rules, day=day, lines=smart.lines)
     week = result["week"]
     everyday = [
         r for r in classify_spending(rows, settings, rules) if r["spending_treatment"] == "Everyday"
@@ -634,23 +705,16 @@ def budget(database: Database, config: AppConfig, *, today: date, period: str | 
             )
             if week
             else None,
-            "big_stuff": [serialize_row(row) for row in result["big_stuff"][:30]],
-            "saved_settings": settings is not None,
-            "housing_options": list(HOUSING),
-            "housing_estimates": {
-                housing: {
-                    key: weekly_line(BudgetSettings(housing=housing))[key]
-                    for key in ("school_weekly", "school_yearly")
-                }
-                for housing in HOUSING
-            },
+            "auto": _automatic(smart, saved, rows, today),
+            "coa": coa_outlook(settings, rows, today, rules, smart.auto.habits),
+            "coa_parts": list(COA_PARTS),
             "cadences": list(CADENCES),
             "periods": [
                 {"name": p.name, "kind": p.kind, "start": p.start, "end": p.end}
                 for p in school_periods()
                 if p.start <= today
             ],
-            "treatments": treatment_table(config, rows, settings, rules),
+            "treatments": treatment_table(smart.auto, rules),
             "treatment_options": list(TREATMENTS),
             "category_default": CATEGORY_DEFAULT,
         }
@@ -658,7 +722,8 @@ def budget(database: Database, config: AppConfig, *, today: date, period: str | 
 
 
 def choices(database: Database, config: AppConfig) -> Row:
-    result: Row = {}
+    defaults = entry_defaults(config)
+    result: Row = {"defaults": defaults, "transaction_types": list(TRANSACTION_TYPES)}
     for kind in CHOICE_KINDS:
         counts = database.choice_counts(kind)
         unused = set(unused_choices(database, config, kind))
@@ -668,10 +733,7 @@ def choices(database: Database, config: AppConfig) -> Row:
             if kind == "category":
                 entry["spending_class"] = config.spending_class(name)
                 entry["locked"] = name == "Uncategorized"
-            else:
-                entry["default"] = name == (
-                    config.default_account if kind == "account" else config.default_payment_method
-                )
+            entry["default"] = name == defaults[kind]
             entries.append(entry)
         result[kind] = entries
     result["keyword_rules"] = keyword_rules(database, config)

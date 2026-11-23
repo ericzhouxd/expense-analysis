@@ -28,8 +28,6 @@ def test_month_totals_split_by_treatment_and_ignore_future_income_and_transfers(
     assert result["month_spent"] == 49000
     assert result["everyday_spent"] == 9000
     assert result["treatment_totals"] == {"Everyday": 9000, "Commitments": 40000, "Irregular": 0}
-    # Food has no reviewed treatment yet; the bill category does.
-    assert result["review_count"] == 2
 
 
 def test_previous_year_like_for_like():

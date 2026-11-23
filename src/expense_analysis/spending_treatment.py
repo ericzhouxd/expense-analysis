@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .university_presets import COA_PARTS
+
 if TYPE_CHECKING:
     from .term_budget import BudgetSettings
 
@@ -17,8 +19,13 @@ CATEGORY_DEFAULT = "Use category default"
 
 
 def validate_rules(rules: dict) -> dict:
-    if set(rules) - {"categories", "transactions"}:
+    if set(rules) - {"categories", "transactions", "parts", "auto"}:
         raise ValueError("Unknown spending rule field.")
+    if type(rules.get("auto", True)) is not bool:
+        raise ValueError("Unknown spending rule field.")
+    for category, part in rules.get("parts", {}).items():
+        if not category.strip() or part not in COA_PARTS:
+            raise ValueError("Choose a listed part of the cost of attendance.")
     for category, treatment in rules.get("categories", {}).items():
         if not category.strip() or treatment not in TREATMENTS:
             raise ValueError("Choose a valid category and spending treatment.")
@@ -46,10 +53,10 @@ def apply_transaction_treatment(rules: dict, transaction_ids: list[str], treatme
 def classify_spending(
     rows: list[dict[str, Any]], budget: BudgetSettings | None, rules: dict | None = None
 ) -> list[dict[str, Any]]:
-    """Transaction exceptions win, then saved category choices, then bill categories.
+    """Transaction exceptions win, then category treatments, then bill categories.
 
-    Categories nobody has reviewed count as Everyday and carry a review flag, so
-    they use up the weekly line instead of silently disappearing from it.
+    Anything else counts as Everyday, so it uses up the weekly line instead of
+    silently disappearing from it.
     """
     rules = validate_rules(rules or {})
     categories = rules.get("categories", {})
@@ -60,11 +67,5 @@ def classify_spending(
         category = row["category"]
         override = overrides.get(row["id"], {})
         treatment = override.get("treatment", categories.get(category, defaults.get(category)))
-        result.append(
-            {
-                **row,
-                "spending_treatment": treatment or "Everyday",
-                "treatment_review": treatment is None,
-            }
-        )
+        result.append({**row, "spending_treatment": treatment or "Everyday"})
     return result

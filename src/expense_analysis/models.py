@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from functools import lru_cache
 from typing import Any
 
 from .config import TRANSACTION_TYPES
@@ -119,6 +120,7 @@ def _is_word_char(character: str) -> bool:
     return character.isascii() and character.isalnum()
 
 
+@lru_cache(maxsize=65536)
 def keyword_matches(keyword: str, text: str) -> bool:
     """Match a rule keyword at word edges, so "rent" ignores "parent" and "rental".
 
@@ -141,6 +143,34 @@ def keyword_matches(keyword: str, text: str) -> bool:
             return True
         start = haystack.find(needle, start + 1)
     return False
+
+
+# Words that say when, not what: they change between two payments of the same thing.
+_NAME_NOISE = frozenset(
+    (
+        *(name.casefold() for name in calendar.month_name if name),
+        *(name.casefold() for name in calendar.month_abbr if name),
+        *("fall", "autumn", "winter", "wint", "spring", "spri", "summer", "quarter", "term"),
+        *("the", "and", "for", "of", "to", "with", "from", "at", "in", "on"),
+    )
+)
+SAME_NAME_OVERLAP = 0.6
+
+
+@lru_cache(maxsize=16384)
+def name_tokens(text: str) -> frozenset[str]:
+    """The words that identify a purchase, without dates, numbers, months or quarters."""
+    words = re.findall(r"[^\W_]+", normalize_text(text))
+    return frozenset(
+        word
+        for word in words
+        if word not in _NAME_NOISE and not any(character.isdigit() for character in word)
+    )
+
+
+def same_name(first: frozenset[str], second: frozenset[str]) -> bool:
+    """Whether two descriptions most likely name the same thing."""
+    return bool(first and second) and len(first & second) >= SAME_NAME_OVERLAP * len(first | second)
 
 
 @dataclass(frozen=True)

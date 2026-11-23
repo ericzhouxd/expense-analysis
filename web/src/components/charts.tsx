@@ -2,6 +2,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
+  type ReactNode,
   useId,
   useLayoutEffect,
   useRef,
@@ -14,21 +15,20 @@ import {
   money,
   MONTH_SHORT,
   parseIso,
-  plural,
   rangeLabel,
-  versus,
   weekday,
   wholeMoney,
 } from "../lib/format";
-import { categoryColor, hot, rgba } from "../lib/glyphs";
+import { categoryColor, hot, LED, rgba } from "../lib/glyphs";
 import { Glyph } from "./instrument";
 
-const ACCENT = "#D4F53C";
-const AMBER = "#F2C14E";
+const { accent: ACCENT, amber: AMBER, coral: CORAL, sage: SAGE } = LED;
+/** Averages are drawn in plain ink: amber is for estimates and the weekly line. */
+const AVERAGE = "#DDE3D2";
 
 /** The laid-out width of a chart's box, so it can draw at one unit per pixel. */
-function useWidth(fallback: number): [(element: HTMLDivElement | null) => void, number] {
-  const [element, setElement] = useState<HTMLDivElement | null>(null);
+export function useWidth(fallback: number): [(element: HTMLElement | null) => void, number] {
+  const [element, setElement] = useState<HTMLElement | null>(null);
   const [width, setWidth] = useState(fallback);
   useLayoutEffect(() => {
     if (!element) return;
@@ -112,7 +112,7 @@ function ledDots(color: string, body = 1.8): string {
 }
 
 /** SVG defs for a domed LED dot in one color, tiled every 6 units. */
-function DotPattern({ id, color, r = 2.2, shine = 0.75 }: { id: string; color: string; r?: number; shine?: number }) {
+export function DotPattern({ id, color, r = 2.2, shine = 0.75 }: { id: string; color: string; r?: number; shine?: number }) {
   return (
     <>
       <radialGradient id={`${id}g`} cx="38%" cy="34%" r="70%">
@@ -129,7 +129,7 @@ function DotPattern({ id, color, r = 2.2, shine = 0.75 }: { id: string; color: s
 }
 
 /** Shared SVG defs: sunken sockets for unlit dots, a recessed well, glass sheen. */
-function PanelDefs({ id, top, bottom }: { id: string; top: number; bottom: number }) {
+export function PanelDefs({ id, top, bottom }: { id: string; top: number; bottom: number }) {
   return (
     <>
       <pattern id={`${id}off`} width="6" height="6" patternUnits="userSpaceOnUse">
@@ -149,14 +149,62 @@ function PanelDefs({ id, top, bottom }: { id: string; top: number; bottom: numbe
 }
 
 /** A recessed slot: dark well, shadowed top lip, lit bottom edge. */
-function Well({ id, x, y, width, height }: { id: string; x: number; y: number; width: number; height: number }) {
+export function Well({ id, x, y, width, height, lit = false }: { id: string; x: number; y: number; width: number; height: number; lit?: boolean }) {
   return (
     <g>
       <rect x={x - 3} y={y - 3} width={width + 6} height={height + 6} fill={`url(#${id}well)`} />
       <rect x={x - 3} y={y - 3} width={width + 6} height="2" fill="#000" opacity="0.7" />
       <rect x={x - 3} y={y + height + 2} width={width + 6} height="1" fill="#fff" opacity="0.06" />
       <rect x={x} y={y} width={width} height={height} fill={`url(#${id}off)`} />
+      {lit ? (
+        <rect
+          x={x - 3.5}
+          y={y - 3.5}
+          width={width + 7}
+          height={height + 7}
+          fill="none"
+          stroke="#E9ECE3"
+          strokeOpacity="0.4"
+        />
+      ) : null}
     </g>
+  );
+}
+
+/** The sheen over one slot's glass, drawn last. */
+export function Glass({ id, x, y, width, height }: { id: string; x: number; y: number; width: number; height: number }) {
+  return (
+    <rect x={x - 3} y={y - 3} width={width + 6} height={height + 6} fill={`url(#${id}sheen)`} pointerEvents="none" />
+  );
+}
+
+export interface Reading {
+  text: string;
+  tone?: "up" | "ok" | "warn";
+}
+
+/** The line under a chart that says what is being pointed at. */
+export function ReadoutBar({ parts }: { parts: Reading[] }) {
+  return (
+    <div className="readout-bar" aria-hidden="true">
+      <span className="caret">▸</span>
+      <span className="parts">
+        {parts.map((part) => (
+          <span key={part.text} className={part.tone}>
+            {part.text}
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+export function LegendDot({ color, children }: { color: string; children: ReactNode }) {
+  return (
+    <span>
+      <i style={{ backgroundColor: color }} />
+      {children}
+    </span>
   );
 }
 
@@ -172,12 +220,10 @@ export function DotCalendar({
   days,
   today,
   onPick,
-  dailyAllowance,
 }: {
   days: Day[];
   today: string | null;
   onPick?: (date: string) => void;
-  dailyAllowance?: number | null;
 }) {
   const [hover, setHover] = useState<Day | null>(null);
   if (!days.length) return null;
@@ -188,27 +234,15 @@ export function DotCalendar({
     (best, day) => (!day.future && day.spent > (best?.spent ?? 0) ? day : best),
     null,
   );
-  const quiet = days.filter((day) => !day.future && day.count === 0).length;
 
-  function describe(day: Day): string {
+  function describe(day: Day): Reading[] {
     const date = parseIso(day.date);
-    const label = `${weekday(day.date)} ${MONTH_SHORT[date.getMonth()]} ${date.getDate()}`;
-    if (day.future) {
-      return dailyAllowance
-        ? `${label} · ahead · ${money(dailyAllowance)}/day keeps you on plan`
-        : `${label} · ahead`;
-    }
-    if (!day.count) return `${label} · no spending ✓`;
-    return `${label} · ${money(day.spent)} · ${plural(day.count, "purchase")}${day.date === today ? " · today" : ""}`;
+    const label = { text: `${weekday(day.date)} ${MONTH_SHORT[date.getMonth()]} ${date.getDate()}` };
+    if (day.future) return [label];
+    return [label, { text: money(day.spent) }, ...(day.count > 1 ? [{ text: `${day.count}×` }] : [])];
   }
 
-  const summary = hover
-    ? describe(hover)
-    : [
-        biggest ? `Biggest day · ${weekday(biggest.date)} ${parseIso(biggest.date).getDate()} · ${money(biggest.spent)}` : "No spending yet",
-        plural(quiet, "no-spend day"),
-        "point at a day",
-      ].join("  ·  ");
+  const shown = hover ?? biggest;
 
   return (
     <div className="stack">
@@ -241,7 +275,9 @@ export function DotCalendar({
               type="button"
               className={`cell ${day.date === today ? "today" : ""} ${day.future ? "future" : ""}`}
               style={background ? { background } : undefined}
-              aria-label={describe(day)}
+              aria-label={describe(day)
+                .map((part) => part.text)
+                .join(", ")}
               onMouseEnter={() => setHover(day)}
               onFocus={() => setHover(day)}
               onBlur={() => setHover(null)}
@@ -254,38 +290,42 @@ export function DotCalendar({
           );
         })}
       </div>
-      <div className="readout-bar" role="status">
-        <span className="caret" aria-hidden="true">
-          ▸
-        </span>
-        <span>{summary}</span>
-      </div>
+      {shown ? <ReadoutBar parts={[...(hover ? [] : [{ text: "Peak" }]), ...describe(shown)]} /> : null}
     </div>
   );
 }
 
 function dotValue(largest: number, dots: number): number {
-  const steps = [100, 200, 500, 1000, 2000, 2500, 5000, 10000, 20000, 25000, 50000, 100000, 250000, 500000];
-  return steps.find((step) => largest / step <= dots) ?? Math.ceil(largest / dots);
+  const raw = largest / dots;
+  const power = 10 ** Math.floor(Math.log10(Math.max(1, raw)));
+  return Math.max(100, ([1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find((size) => size * power >= raw) ?? 10) * power);
 }
 
+/** Width of one LED in a category's track. */
+const DOT = 9;
+
+/** Categories by amount as rows of LEDs, scaled so the largest fits its track. */
 export function CategoryMeters({
   categories,
   onPick,
+  limit = 9,
 }: {
   categories: { category: string; spent: number }[];
-  onPick?: (category: string) => void;
+  onPick: (category: string) => void;
+  limit?: number;
 }) {
+  const [track, width] = useWidth(306);
+  const [all, setAll] = useState(false);
   const positive = categories.filter((item) => item.spent > 0);
   if (!positive.length) return null;
   const largest = Math.max(...positive.map((item) => item.spent));
-  const unit = dotValue(largest, 34);
+  const total = positive.reduce((sum, item) => sum + item.spent, 0);
+  const unit = dotValue(largest, Math.max(8, Math.floor((width - 4) / DOT)));
+  // One hidden row would cost as much space as the button that shows it.
+  const shown = all || positive.length <= limit + 1 ? positive : positive.slice(0, limit);
   return (
-    <div className="stack tight">
-      <span className="small dim">
-        one lit dot = {money(unit)}
-      </span>
-      {positive.map((item) => {
+    <div className="meters">
+      {shown.map((item, index) => {
         const color = categoryColor(item.category);
         const count = Math.max(1, Math.round(item.spent / unit));
         return (
@@ -293,36 +333,37 @@ export function CategoryMeters({
             key={item.category}
             type="button"
             className="meter-row"
-            style={{ cursor: onPick ? "pointer" : "default" }}
-            onClick={() => onPick?.(item.category)}
-            aria-label={`${item.category}: ${money(item.spent)}`}
+            onClick={() => onPick(item.category)}
           >
             <Glyph category={item.category} />
-            <span className="small">{item.category}</span>
-            <span className="track" aria-hidden="true">
+            <span className="truncate">{item.category}</span>
+            <span className="track" aria-hidden="true" ref={index ? undefined : track}>
               <span className="dots" />
               <span
                 className="fill"
                 style={{
-                  width: `${count * 9}px`,
+                  width: `${count * DOT}px`,
                   backgroundImage: ledDots(color),
                   filter: `drop-shadow(0 0 3px ${rgba(color, 0.8)})`,
                 }}
               />
             </span>
-            <span className="num small" style={{ textAlign: "right" }}>
+            <span className="num">
               {money(item.spent)}
+              <span className="tiny dim">{Math.round((item.spent / total) * 100)}%</span>
             </span>
           </button>
         );
       })}
+      {shown.length < positive.length ? (
+        <div className="row meters-foot">
+          <button type="button" className="link small" onClick={() => setAll(true)}>
+            + {positive.length - shown.length} more
+          </button>
+        </div>
+      ) : null}
     </div>
   );
-}
-
-function monthShort(month: string): string {
-  const [year, number] = month.split("-").map(Number);
-  return `${MONTH_SHORT[(number ?? 1) - 1]?.toUpperCase()}${number === 1 ? ` ${String(year).slice(2)}` : ""}`;
 }
 
 /** Narrowest column whose month and value labels still clear their neighbors'. */
@@ -376,15 +417,15 @@ export function weekColumns(items: { week: string; end: string; label: string; s
 function describeColumn(
   item: TrendColumn,
   averageLabel: string | null,
-): { text: string; tone?: "up" | "ok" | "warn" }[] {
+): Reading[] {
   const title = { text: item.title };
   const plan = item.forecast;
   if (plan) {
     return [
       title,
-      ...(item.ahead ? [] : [{ text: `${money(item.spent)} so far` }]),
-      { text: `${item.ahead ? "forecast" : "heading for"} ~${wholeMoney(plan.expected)}`, tone: "warn" },
-      { text: `likely ${wholeMoney(plan.low)}–${wholeMoney(plan.high)}` },
+      ...(item.ahead ? [] : [{ text: money(item.spent) }]),
+      { text: `~${wholeMoney(plan.expected)}`, tone: "warn" },
+      { text: `${wholeMoney(plan.low)}–${wholeMoney(plan.high)}` },
     ];
   }
   if (!averageLabel || item.average === null) return [title, { text: money(item.spent) }];
@@ -392,7 +433,8 @@ function describeColumn(
   return [
     title,
     { text: money(item.spent) },
-    { text: versus(gap, `the ${averageLabel}`), tone: gap > 0 ? "up" : "ok" },
+    { text: `avg ${money(Math.round(item.average))}` },
+    { text: `${gap > 0 ? "▲" : "▼"} ${money(Math.abs(gap))}`, tone: gap > 0 ? "up" : "ok" },
   ];
 }
 
@@ -407,14 +449,14 @@ export function DotColumns({
   data,
   highlight,
   average,
-  averageLabel = "3-month average",
+  averageLabel = "3-month avg",
   unit = "month",
   forecast,
   onPick,
   pickable,
 }: {
   data: Column[];
-  /** What one column is, for the readout's prompt: "month" or "week". */
+  /** What one column is: "month" or "week". */
   unit?: string;
   highlight?: string;
   average?: number[];
@@ -458,12 +500,13 @@ export function DotColumns({
   const shown = columns.slice(from, from + fit);
 
   const height = 244;
-  const top = 38;
-  const base = 194;
+  // Multiples of the 6-unit dot grid, so no dot is cut.
+  const top = 36;
+  const base = 192;
   const column = width / shown.length;
   // Bars are a whole number of dots wide. Each column draws from its own origin,
   // so the dot grid starts at its left edge and the columns stay evenly spaced.
-  const barWidth = Math.max(12, Math.floor(Math.min(54, column * 0.62) / 6) * 6);
+  const barWidth = Math.max(12, Math.floor(Math.min(66, column * 0.62) / 6) * 6);
   const left = (index: number) => Math.round((index + 0.5) * column - barWidth / 2);
   const center = (index: number) => left(index) + barWidth / 2;
   const largest = Math.max(
@@ -494,14 +537,9 @@ export function DotColumns({
   const resting = shown.find((item) => item.key === highlight) ?? shown[shown.length - 1];
   const described = focused ?? resting;
   const stop = described?.key;
-  const hint = !focused
-    ? `point at a ${unit}`
-    : canPick(focused) && focused.key !== highlight
-      ? "click to open it"
-      : null;
 
   return (
-    <div className="stack tight" ref={box}>
+    <div className="stack" ref={box}>
       <svg
         className="chart"
         width={width}
@@ -546,18 +584,7 @@ export function DotColumns({
                 {...bind(item.key, pick ? () => onPick?.(item.key) : null)}
               >
                 <rect x={index * column - origin} y="0" width={column} height={height} fill="transparent" />
-                <Well id={id} x={x} y={top} width={barWidth} height={base - top} />
-                {lit ? (
-                  <rect
-                    x={x - 3.5}
-                    y={top - 3.5}
-                    width={barWidth + 7}
-                    height={base - top + 7}
-                    fill="none"
-                    stroke="#E9ECE3"
-                    strokeOpacity="0.4"
-                  />
-                ) : null}
+                <Well id={id} x={x} y={top} width={barWidth} height={base - top} lit={lit} />
                 {h.spent ? (
                   <>
                     <rect
@@ -607,6 +634,7 @@ export function DotColumns({
                     />
                   </>
                 ) : null}
+                <Glass id={id} x={x} y={top} width={barWidth} height={base - top} />
                 <text
                   x={x + barWidth / 2}
                   y={base + 30}
@@ -625,7 +653,6 @@ export function DotColumns({
           })}
         </g>
         <g pointerEvents="none">
-          <rect x="0" y={top - 3} width={width} height={base - top + 6} fill={`url(#${id}sheen)`} />
           {aheadAt > 0 ? (
             <>
               <line
@@ -645,7 +672,7 @@ export function DotColumns({
             <polyline
               points={averagePoints}
               fill="none"
-              stroke={AMBER}
+              stroke={AVERAGE}
               strokeWidth="2"
               strokeDasharray="1 6"
               strokeLinecap="round"
@@ -674,31 +701,17 @@ export function DotColumns({
           })}
         </g>
       </svg>
-      {described ? (
-        <div className="readout-bar wrap" aria-hidden="true">
-          <span className="caret">▸</span>
-          {describeColumn(described, lineOn ? averageLabel : null).map((part) => (
-            <span key={part.text} className={part.tone}>
-              {part.text}
-            </span>
-          ))}
-          {hint ? <span className="faint">{hint}</span> : null}
-        </div>
-      ) : null}
+      {described ? <ReadoutBar parts={describeColumn(described, lineOn ? averageLabel : null)} /> : null}
       <div className="legend">
-        <span>
-          <i style={{ backgroundColor: ACCENT, boxShadow: `0 0 6px ${ACCENT}` }} />
-          Net spent
-        </span>
         {average ? (
           <button type="button" aria-pressed={lineOn} onClick={() => setLineOn((value) => !value)}>
-            <i style={{ backgroundColor: AMBER }} />
+            <i style={{ backgroundColor: AVERAGE }} />
             {averageLabel}
           </button>
         ) : null}
         {forecast?.length ? (
           <button type="button" aria-pressed={planOn} onClick={() => setPlanOn((value) => !value)}>
-            <i style={{ backgroundColor: "#8d7430" }} />
+            <i style={{ backgroundColor: AMBER }} />
             Forecast
           </button>
         ) : null}
@@ -714,81 +727,99 @@ export function CashFlowChart({
   data: { month: string; income: number; expenses: number; refunds: number; net: number }[];
 }) {
   const id = useId().replace(/:/g, "");
+  const [box, width] = useWidth(720);
+  const { active, bind, leave } = usePreview();
   if (!data.length) return null;
-  const width = 720;
-  const height = 260;
-  const middle = 120;
-  const reach = 96;
-  const shown = data.slice(-12);
-  const largest = Math.max(
-    1,
-    ...shown.map((item) => Math.max(item.income + item.refunds, item.expenses, Math.abs(item.net))),
-  );
+  const shown = data.slice(-Math.min(12, Math.max(3, Math.floor(width / MIN_COLUMN))));
+  const most = Math.max(1, ...shown.map((item) => item.income + item.refunds));
+  const least = Math.max(1, ...shown.map((item) => item.expenses));
+  const top = 12;
+  const dots = 32;
+  // Room on each side of zero in proportion to what it has to hold, in whole dots.
+  const above = Math.min(dots - 4, Math.max(4, Math.round((dots * most) / (most + least))));
+  const middle = top + above * 6;
+  const bottom = top + dots * 6;
+  const height = bottom + 28;
+  const perDot = Math.max(most / above, least / (dots - above));
+  const scale = (value: number) => Math.round(value / perDot) * 6;
   const column = width / shown.length;
-  const barWidth = Math.min(46, column * 0.56);
-  const scale = (value: number) => Math.round((reach * value) / largest / 6) * 6;
+  const barWidth = Math.max(12, Math.floor(Math.min(54, column * 0.56) / 6) * 6);
+  const described = shown.find((item) => item.month === active) ?? shown[shown.length - 1];
+  const parts = (item: (typeof shown)[number]): Reading[] => [
+    { text: monthColumn(item.month, 0).title },
+    { text: `${money(item.income + item.refunds)} in`, tone: "ok" },
+    { text: `${money(item.expenses)} out`, tone: "up" },
+    { text: `net ${money(item.net, { signed: true })}`, tone: "warn" },
+  ];
   return (
-    <div className="stack tight">
-      <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Monthly cash flow">
+    <div className="stack" ref={box}>
+      <svg
+        className="chart"
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        role="group"
+        aria-label="Money in and out by month"
+        onPointerLeave={leave}
+      >
         <defs>
-          <PanelDefs id={id} top={middle - reach} bottom={middle + reach} />
-          <DotPattern id={`${id}in`} color="#9FD39B" />
-          <DotPattern id={`${id}out`} color="#FF8A70" />
+          <PanelDefs id={id} top={top} bottom={bottom} />
+          <DotPattern id={`${id}in`} color={SAGE} />
+          <DotPattern id={`${id}out`} color={CORAL} />
           <radialGradient id={`${id}net`} cx="38%" cy="34%" r="70%">
             <stop offset="0" stopColor="#fff6dc" />
-            <stop offset="0.45" stopColor="#F2C14E" />
+            <stop offset="0.45" stopColor={AMBER} />
             <stop offset="1" stopColor="#b5861f" />
           </radialGradient>
         </defs>
-        {shown.map((item, index) => {
-          const x = Math.round((index + 0.5) * column - barWidth / 2);
-          const up = scale(item.income + item.refunds);
-          const down = scale(item.expenses);
-          const net = middle - Math.round((reach * item.net) / largest);
-          return (
-            <g key={item.month}>
-              <Well id={id} x={x} y={middle - reach} width={barWidth} height={reach * 2} />
-              <rect x={x} y={middle - up} width={barWidth} height={up} fill={`url(#${id}in)`} />
-              <rect x={x} y={middle} width={barWidth} height={down} fill={`url(#${id}out)`} />
-              <circle
-                cx={x + barWidth / 2}
-                cy={net}
-                r="4.5"
-                fill={`url(#${id}net)`}
-                style={{ filter: "drop-shadow(0 0 4px rgba(242,193,78,.8))" }}
+        <g>
+          {shown.map((item, index) => {
+            const origin = Math.round((index + 0.5) * column - barWidth / 2);
+            const up = scale(item.income + item.refunds);
+            const down = scale(item.expenses);
+            const net = Math.round(middle - (item.net / perDot) * 6);
+            const on = item.month === described?.month;
+            return (
+              <g
+                key={item.month}
+                className="column"
+                role="img"
+                tabIndex={on ? 0 : -1}
+                aria-label={parts(item)
+                  .map((part) => part.text)
+                  .join(", ")}
+                transform={`translate(${origin} ${top})`}
+                {...bind(item.month, null)}
               >
-                <title>{`${item.month}: net ${money(item.net, { signed: true })}`}</title>
-              </circle>
-              <text x={x + barWidth / 2} y={height - 8} textAnchor="middle">
-                {monthShort(item.month)}
-              </text>
-            </g>
-          );
-        })}
-        <line x1="0" x2={width} y1={middle} y2={middle} stroke="#3a4234" strokeDasharray="2 4" />
-        <rect
-          x="0"
-          y={middle - reach - 3}
-          width={width}
-          height={reach * 2 + 6}
-          fill={`url(#${id}sheen)`}
-          pointerEvents="none"
-        />
+                <rect x={index * column - origin} y={-top} width={column} height={height} fill="transparent" />
+                <Well id={id} x={0} y={0} width={barWidth} height={bottom - top} lit={item.month === active} />
+                <rect x="0" y={middle - top - up} width={barWidth} height={up} fill={`url(#${id}in)`} />
+                <rect x="0" y={middle - top} width={barWidth} height={down} fill={`url(#${id}out)`} />
+                <Glass id={id} x={0} y={0} width={barWidth} height={bottom - top} />
+                <circle
+                  cx={barWidth / 2}
+                  cy={net - top}
+                  r="5"
+                  fill={`url(#${id}net)`}
+                  stroke="#070806"
+                  strokeWidth="2"
+                  style={{ filter: `drop-shadow(0 0 4px ${rgba(AMBER, 0.8)})` }}
+                />
+                <text
+                  x={barWidth / 2}
+                  y={bottom - top + 22}
+                  textAnchor="middle"
+                  style={on ? { fill: "#E9ECE3" } : undefined}
+                >
+                  {monthColumn(item.month, 0).name}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+        <line x1="0" x2={width} y1={middle} y2={middle} stroke="#59614f" strokeDasharray="2 4" pointerEvents="none" />
       </svg>
-      <div className="legend">
-        <span>
-          <i style={{ backgroundColor: "#9FD39B" }} />
-          Income + refunds
-        </span>
-        <span>
-          <i style={{ backgroundColor: "#FF8A70" }} />
-          Expenses
-        </span>
-        <span>
-          <i style={{ backgroundColor: "#F2C14E" }} />
-          Net
-        </span>
-      </div>
+      {described ? <ReadoutBar parts={parts(described)} /> : null}
     </div>
   );
 }
@@ -799,55 +830,42 @@ export function DriverBars({
   onPick,
 }: {
   drivers: { category: string; current: number; previous: number; change: number; percent: number | null }[];
-  onPick?: (category: string) => void;
+  onPick: (category: string) => void;
 }) {
+  const [track, width] = useWidth(306);
   const largest = Math.max(1, ...drivers.map((item) => Math.abs(item.change)));
+  const half = Math.max(4, Math.floor((width - 4) / 2 / DOT));
   return (
-    <div className="stack tight">
-      {drivers.map((item) => {
-        const share = (Math.abs(item.change) / largest) * 50;
-        const color = item.change > 0 ? "#FF8A70" : "#9FD39B";
+    <div className="meters">
+      {drivers.map((item, index) => {
+        const more = item.change > 0;
+        const count = Math.max(1, Math.round((Math.abs(item.change) / largest) * half));
+        const color = more ? CORAL : SAGE;
         return (
           <button
             key={item.category}
             type="button"
-            className={`meter-row ${onPick ? "pick" : ""}`}
-            style={{ gridTemplateColumns: "26px minmax(90px,150px) minmax(0,1fr) 150px" }}
-            onClick={() => onPick?.(item.category)}
-            title={onPick ? `See ${item.category} transactions` : undefined}
+            className="meter-row"
+            onClick={() => onPick(item.category)}
           >
-            <Glyph category={item.category} small />
-            <span className="small">{item.category}</span>
-            <span className="track" aria-hidden="true">
+            <Glyph category={item.category} />
+            <span className="truncate">{item.category}</span>
+            <span className="track diverge" aria-hidden="true" ref={index ? undefined : track}>
+              <span className="dots" />
               <span
+                className="fill"
                 style={{
-                  position: "absolute",
-                  top: 0,
-                  bottom: 0,
-                  left: "50%",
-                  width: 1,
-                  background: "#2F352B",
-                  zIndex: 1,
-                }}
-              />
-              <span
-                style={{
-                  position: "absolute",
-                  top: 2,
-                  bottom: 2,
-                  left: item.change > 0 ? "50%" : `${50 - share}%`,
-                  width: `${share}%`,
-                  backgroundImage: ledDots(color, 1.9),
-                  backgroundSize: "7px 10px",
+                  left: more ? "50%" : `calc(50% - ${count * DOT}px)`,
+                  width: `${count * DOT}px`,
+                  backgroundImage: ledDots(color),
                   filter: `drop-shadow(0 0 3px ${rgba(color, 0.7)})`,
                 }}
               />
             </span>
-            <span className="num small" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-              <span className={item.change > 0 ? "up" : "ok"}>{money(item.change, { signed: true })}</span>
-              <br />
-              <span className="dim tiny">
-                {money(item.previous)} → {money(item.current)}
+            <span className="num">
+              <span className={more ? "up" : "ok"}>{money(item.change, { signed: true })}</span>
+              <span className="tiny dim">
+                {wholeMoney(item.previous)} → {wholeMoney(item.current)}
               </span>
             </span>
           </button>

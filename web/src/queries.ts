@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 
-import { type Bootstrap, type Choices, get, type Overview } from "./api";
+import { type Bootstrap, type Choices, get, type Overview, post, type Suggestion } from "./api";
 import type { Vocabulary } from "./lib/quickParse";
 
 export function useBootstrap() {
@@ -23,10 +24,27 @@ export function vocabularyOf(data: Bootstrap): Vocabulary {
     categories: data.categories.map((category) => category.name),
     accounts: data.accounts,
     paymentMethods: data.payment_methods,
-    rules: data.rules,
-    merchants: data.merchants,
     merchantNames: data.merchant_names,
   };
+}
+
+const TYPING_MS = 120;
+
+/** What the app would file this under, kept up with while it is typed. */
+export function useSuggestion(description: string, merchant: string, transactionType: string) {
+  const asked = JSON.stringify({ description: description.trim(), merchant, transaction_type: transactionType });
+  const [settled, setSettled] = useState(asked);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSettled(asked), TYPING_MS);
+    return () => window.clearTimeout(timer);
+  }, [asked]);
+  const body = JSON.parse(settled) as { description: string };
+  return useQuery({
+    queryKey: ["suggest", settled],
+    queryFn: () => post<Suggestion>("/api/suggest", body),
+    enabled: body.description.length > 0,
+    placeholderData: (previous) => (body.description ? previous : undefined),
+  });
 }
 
 export function useOverview(month: string | null, scope: "everyday" | "all") {

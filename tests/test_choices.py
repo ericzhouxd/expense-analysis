@@ -137,6 +137,22 @@ def test_rename_and_delete_used_choice_preserves_transactions_and_defaults(
     assert "Unused" not in choice_options(db, config, kind)
 
 
+def test_a_configured_default_stays_a_choice_after_another_is_chosen(tmp_path):
+    from expense_analysis.categories import effective_config
+    from expense_analysis.choices import entry_defaults, save_entry_default
+
+    db = Database(tmp_path / "defaults.sqlite")
+    db.initialize()
+    # The default is in no list, only in [defaults].
+    config = AppConfig(accounts=("Savings",), default_account="Main")
+    assert save_entry_default(db, config, "account", "Savings") == "Main"
+    effective = effective_config(db, config)
+    assert entry_defaults(effective)["account"] == "Savings"
+    assert "Main" in choice_options(db, effective, "account")
+    assert save_entry_default(db, config, "account", "Main") == "Savings"
+    assert effective_config(db, config).default_account == "Main"
+
+
 def test_category_delete_remaps_history_rules_plan_and_treatment(tmp_path):
     from expense_analysis.categories import effective_config
     from expense_analysis.choices import delete_choice

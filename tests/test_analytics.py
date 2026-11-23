@@ -3,11 +3,11 @@ from datetime import date, timedelta
 import pytest
 
 from expense_analysis.analytics import (
+    frequent_entries,
+    largest_purchases,
     monthly_spending,
     period_metrics,
-    recurring_transactions,
     savings_summary,
-    spending_anomalies,
     spending_drivers,
     spending_forecast,
     transactions_frame,
@@ -46,7 +46,6 @@ def test_empty_analytics_are_safe():
     metrics = period_metrics(frame, date(2026, 7, 30))
     assert metrics.spending == 0
     assert monthly_spending(frame).empty
-    assert spending_anomalies(frame).empty
     forecast = spending_forecast(frame, date(2026, 7, 30))
     assert forecast.months.empty
     assert forecast.history_months == 0
@@ -96,21 +95,7 @@ def test_refunds_reduce_spending_and_income_improves_cash_flow():
     assert summary["savings_rate"] == pytest.approx(84)
 
 
-def test_recurring_charge_detection():
-    frame = transactions_frame(
-        [
-            row("1", "2026-01-01", 999, description="Music subscription"),
-            row("2", "2026-02-01", 999, description="Music subscription"),
-            row("3", "2026-03-01", 999, description="Music subscription"),
-        ],
-        AppConfig(),
-    )
-    recurring = recurring_transactions(frame)
-    assert recurring.iloc[0]["frequency"] == "Monthly"
-    assert recurring.iloc[0]["average_amount"] == 9.99
-
-
-def test_anomaly_and_spending_driver_detection():
+def test_spending_driver_detection():
     frame = transactions_frame(
         [
             row("1", "2026-06-01", 1000),
@@ -121,9 +106,6 @@ def test_anomaly_and_spending_driver_detection():
         ],
         AppConfig(),
     )
-    anomalies = spending_anomalies(frame)
-    assert anomalies.iloc[0]["amount"] == 100
-
     drivers = spending_drivers(frame, date(2026, 7, 31))
     assert drivers.iloc[0]["change"] == 80
 
@@ -135,27 +117,6 @@ def test_spending_drivers_keep_the_last_days_of_a_complete_month():
     drivers = spending_drivers(frame, date(2026, 3, 31))
     assert drivers.iloc[0]["current"] == 50
     assert drivers.iloc[0]["previous"] == 10
-
-
-def test_recurring_detects_more_cycles_and_flags_stopped_charges():
-    rows = [
-        row("b1", "2026-01-02", 1500, description="Gym biweekly"),
-        row("b2", "2026-01-16", 1500, description="Gym biweekly"),
-        row("b3", "2026-01-30", 1500, description="Gym biweekly"),
-        row("y1", "2023-05-01", 9900, description="Domain #48213"),
-        row("y2", "2024-05-01", 9900, description="Domain #51122"),
-        row("y3", "2025-05-01", 9900, description="Domain #60001"),
-        row("s1", "2026-03-01", 450, description="7-Eleven"),
-        row("s2", "2026-03-08", 450, description="7-Eleven"),
-        row("s3", "2026-03-15", 450, description="7-Eleven"),
-    ]
-    recurring = recurring_transactions(transactions_frame(rows, AppConfig()), date(2026, 3, 20))
-    by_name = recurring.set_index("merchant")
-    assert by_name.loc["Gym Biweekly", "frequency"] == "Biweekly"
-    assert by_name.loc["Gym Biweekly", "status"] == "Possibly stopped"
-    assert by_name.loc["Domain", "frequency"] == "Yearly"
-    assert by_name.loc["Domain", "next_expected"] == date(2026, 5, 1)
-    assert by_name.loc["7-Eleven", "status"] == "Active"
 
 
 def test_forecast_needs_two_complete_months():
@@ -308,3 +269,61 @@ def test_forecast_skips_a_first_month_that_started_late():
     forecast = spending_forecast(frame, date(2026, 4, 10))
     assert forecast.history_months == 2
     assert forecast.level == pytest.approx(300)
+
+
+def test_frequent_entries_offer_recent_repeats_as_last_recorded():
+    def bought(row_id, day, cents, description, **extra):
+        base = row(row_id, day, cents, description=description)
+        return {
+            **base,
+            "merchant": "Kettle",
+            "account": "Checking",
+            "payment_method": "Card",
+        } | extra
+
+    rows = [
+        bought("1", "2026-10-01", 450, "Coffee"),
+        bought("2", "2026-11-03", 475, "coffee", payment_method="Cash"),
+        bought("3", "2025-11-01", 900, "Old lunch"),
+        bought("4", "2025-11-02", 900, "Old lunch"),
+        bought("5", "2025-11-03", 900, "Old lunch"),
+        bought("6", "2026-11-04", 3000, "Only once"),
+        bought("7", "2026-11-04", 800, "Refunded", transaction_type="refund"),
+        bought("8", "2026-11-05", 800, "Refunded", transaction_type="refund"),
+        # Not here yet, so it says nothing about habits.
+        bought("9", "2026-12-01", 999, "Coffee"),
+    ]
+    found = frequent_entries(rows, date(2026, 11, 9))
+    assert [item["description"] for item in found] == ["coffee", "Old lunch"]
+    assert found[0] == {
+        "description": "coffee",
+        "merchant": "Kettle",
+        "amount_cents": 475,
+        "category": "Food",
+        "account": "Checking",
+        "payment_method": "Cash",
+        "count": 2,
+        "last": date(2026, 11, 3),
+    }
+    assert len(frequent_entries(rows, date(2026, 11, 9), limit=1)) == 1
+    assert frequent_entries([], date(2026, 11, 9)) == []
+
+
+def test_largest_purchases_leave_out_bills_refunds_and_other_days():
+    rows = [
+        {**row(name, day, cents), "spending_treatment": counts, "transaction_type": kind}
+        for name, day, cents, counts, kind in (
+            ("rent", "2026-11-01", 145000, "Commitments", "expense"),
+            ("flight", "2026-11-02", 30000, "Irregular", "expense"),
+            ("return", "2026-11-03", 25000, "Everyday", "refund"),
+            ("shoes", "2026-11-04", 9000, "Everyday", "expense"),
+            ("later shoes", "2026-11-05", 9000, "Everyday", "expense"),
+            ("lunch", "2026-11-06", 1200, "Everyday", "expense"),
+            ("last month", "2026-10-31", 50000, "Irregular", "expense"),
+            ("tomorrow", "2026-11-08", 50000, "Irregular", "expense"),
+        )
+    ]
+    start, end = date(2026, 11, 1), date(2026, 11, 7)
+    found = largest_purchases(rows, start, end, limit=3)
+    assert [item["id"] for item in found] == ["flight", "later shoes", "shoes"]
+    assert largest_purchases([], start, end) == []

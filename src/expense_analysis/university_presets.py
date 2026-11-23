@@ -75,6 +75,39 @@ def ucla_benchmark(cohort: str, housing: str, nonresident: bool) -> dict[str, in
     }
 
 
+# The lines of UCLA's cost of attendance, as purchases are sorted into them.
+COA_PARTS = (
+    "Tuition & fees",
+    "Health insurance",
+    "Housing",
+    "Food",
+    "Books",
+    "Transportation",
+    "Personal",
+)
+COA_ADJUSTMENT = "Published total reconciliation"
+
+
+def coa_components(
+    cohort: str, housing: str, nonresident: bool, insurance: bool = True
+) -> dict[str, int]:
+    """UCLA's nine-month cost of attendance in cents, by part; the parts sum to the total."""
+    if cohort not in UCLA_2026["cohorts"] or housing not in UCLA_2026["housing"]:
+        raise ValueError("Choose a listed entry year and housing type.")
+    published = ucla_benchmark(cohort, housing, nonresident)
+    parts = {
+        "Tuition & fees": published["Tuition + student services"]
+        + published["Nonresident tuition"]
+        + published["Campus fees"],
+        # UCLA takes UC SHIP out of the budget of a student who waives it.
+        "Health insurance": published["Insurance"] if insurance else 0,
+        **{name: published[name] for name in COA_PARTS[2:]},
+    }
+    if published.get(COA_ADJUSTMENT):
+        parts[COA_ADJUSTMENT] = published[COA_ADJUSTMENT]
+    return parts
+
+
 class QuarterDates(TypedDict):
     name: str
     quarter_begins: str

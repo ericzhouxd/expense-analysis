@@ -28,8 +28,8 @@ uv run expense-app
 
 ## Import CSV data
 
-Upload a CSV from the Import / Export page to preview and validate it before
-anything is saved. You can also import a local file from the command line:
+Choose or drop a CSV under **Settings → Import & export** to preview and validate it
+before anything is saved. You can also import a local file from the command line:
 
 ```bash
 uv run expense-import /path/to/transactions.csv
@@ -41,18 +41,31 @@ transactions. A backup exported by the app re-imports cleanly as duplicates.
 
 ## What the app includes
 
-- An LED instrument panel: safe-to-spend today, pace meter, purchase ticker, dot calendar
-- ⌘K quick add: type `12.50 chipotle lunch yesterday apple pay` and press Enter
+- An overview that leads with this week against the weekly line and this month against
+  the last, followed by what needs attention, where the money went and what is due
+- ⌘K quick add: type `12.50 chipotle lunch yesterday apple pay` and press Enter, log a
+  repeat purchase again in two keys, search transactions, or jump to a page
 - Day-grouped transaction list with inline editing, keyboard navigation, bulk
   category/treatment changes, and Undo for deletes
 - Explicit expenses, refunds, income, and transfers
 - CSV preview, validation, duplicate detection, category mapping, import, and export
+- Categories suggested from your own earlier entries, learning from corrections, with the
+  evidence one press away
 - 3-, 6-, and 12-month rolling averages and like-for-like comparisons
 - Weekly budget line on the real UCLA quarter calendar (Week 0, Weeks 1–10, finals),
-  with unspent money counted as saved, plus bills and big purchases tracked separately
-- Spending-driver, recurring-charge (with next-expected dates), and anomaly analysis
+  with unspent money counted as saved; bills and big purchases stay outside it
+- A budget with nothing to set up: where you live, which cost of attendance is yours,
+  your bills and how each purchase counts are worked out from your own records, with the
+  reason shown and a way to overrule each one
+- Cost-of-attendance check: whether the whole school year, tuition and rent included,
+  will pass UCLA's COA, with a likely range learned from your own weeks, the weekly
+  spending that stays under it, and how the same method did on your earlier years
+- Spending drivers, and the largest recent purchases
 - Cash-flow, savings-rate, and academic-period analysis
-- Square-cornered dark "instrument" design with locally bundled Departure Mono and Doto type
+- Square-cornered dark "instrument" design with LED panels, a purchase ticker and a dot
+  calendar, in locally bundled Departure Mono and Doto type. Its lists, date pickers and
+  menus are its own, it works on a phone and from the keyboard, and it makes no network
+  requests
 
 ## Local commands
 

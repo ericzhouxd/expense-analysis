@@ -1,7 +1,48 @@
 """Shared editable vocabulary for transaction and budget forms."""
 
-from .config import AppConfig
+from .config import TRANSACTION_TYPES, AppConfig
 from .database import Database
+
+ENTRY_DEFAULTS = ("category", "payment_method", "account", "transaction_type")
+
+
+def entry_defaults(config: AppConfig) -> dict[str, str]:
+    """What a new entry starts with, given the effective config."""
+    return {kind: str(getattr(config, f"default_{kind}")) for kind in ENTRY_DEFAULTS}
+
+
+def save_entry_default(database: Database, config: AppConfig, kind: str, value: str) -> str:
+    """Choose what new entries start with; returns the previous choice."""
+    import json
+
+    from .categories import effective_config, preferences
+
+    if kind not in ENTRY_DEFAULTS:
+        raise ValueError("This field has no default.")
+    with database.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        config = effective_config(database, config)
+        options = (
+            TRANSACTION_TYPES
+            if kind == "transaction_type"
+            else choice_options(database, config, kind)
+        )
+        if value not in options:
+            raise ValueError("This choice no longer exists. Reload and try again.")
+        previous = entry_defaults(config)[kind]
+        settings = preferences(database)
+        settings.setdefault("entry_defaults", {})[kind] = value
+        if kind in ("account", "payment_method"):
+            # A configured default can exist nowhere else; it stays a choice.
+            saved = settings.setdefault("choices", {}).setdefault(kind, [])
+            if previous not in saved:
+                saved.append(previous)
+        connection.execute(
+            "INSERT INTO category_settings(id,payload) VALUES(1,?) ON "
+            "CONFLICT(id) DO UPDATE SET payload=excluded.payload",
+            (json.dumps(settings, ensure_ascii=False),),
+        )
+    return previous
 
 
 def choice_options(database: Database, config: AppConfig, kind: str) -> list[str]:
@@ -56,7 +97,7 @@ def unused_choices(database: Database, config: AppConfig, kind: str) -> list[str
     config = effective_config(database, config)
     used = set(database.list_choice_values(kind))
     if kind == "category":
-        used.add("Uncategorized")
+        used.update(("Uncategorized", config.default_category))
         used.update(value for _, value in config.category_rules)
         budget = database.get_budget_settings()
         if budget:
@@ -86,7 +127,8 @@ def remove_unused_choices(
         if kind == "category":
             for value in values:
                 settings["classes"].pop(value, None)
-                settings.get("spending_rules", {}).get("categories", {}).pop(value, None)
+                for field in ("categories", "parts"):
+                    settings.get("spending_rules", {}).get(field, {}).pop(value, None)
         connection.execute(
             "INSERT INTO category_settings(id,payload) VALUES(1,?) ON "
             "CONFLICT(id) DO UPDATE SET payload=excluded.payload",
@@ -159,6 +201,9 @@ def save_choice(
                 removed.append(source)
             if source in saved:
                 saved.remove(source)
+            chosen = settings.get("entry_defaults", {})
+            if chosen.get(kind) == source:
+                chosen[kind] = name
             for row in connection.execute(
                 f"SELECT * FROM transactions WHERE {kind} = ?", (source,)
             ).fetchall():

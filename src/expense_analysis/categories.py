@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import replace
 from datetime import date
-from typing import Any
 
+from .category_learning import UNCATEGORIZED, CategoryHistory, Evidence, Suggestion
 from .config import AppConfig
 from .database import Database
 from .models import TransactionDraft, keyword_matches, normalize_text
@@ -47,6 +47,7 @@ def effective_config(database: Database, config: AppConfig) -> AppConfig:
         if normalize_text(k) not in hidden_rules
     }
     choice_aliases = settings.get("choice_aliases", {})
+    chosen = settings.get("entry_defaults", {})
 
     def vocabulary(kind: str, values: tuple[str, ...]) -> tuple[str, ...]:
         aliases_for_kind = choice_aliases.get(kind, {})
@@ -64,12 +65,14 @@ def effective_config(database: Database, config: AppConfig) -> AppConfig:
         category_aliases=tuple(aliases.items()),
         accounts=vocabulary("account", config.accounts),
         payment_methods=vocabulary("payment_method", config.payment_methods),
-        default_account=choice_aliases.get("account", {}).get(
-            config.default_account, config.default_account
-        ),
-        default_payment_method=choice_aliases.get("payment_method", {}).get(
+        default_account=chosen.get("account")
+        or choice_aliases.get("account", {}).get(config.default_account, config.default_account),
+        default_payment_method=chosen.get("payment_method")
+        or choice_aliases.get("payment_method", {}).get(
             config.default_payment_method, config.default_payment_method
         ),
+        default_category=chosen.get("category") or config.default_category,
+        default_transaction_type=chosen.get("transaction_type") or config.default_transaction_type,
     )
 
 
@@ -107,11 +110,15 @@ def save_category(
         }
         settings["aliases"][source] = name
         settings["classes"].pop(source, None)
-        treatments = settings.get("spending_rules", {}).get("categories", {})
-        if source in treatments:
-            old_treatment = treatments.pop(source)
-            treatments.setdefault(name, old_treatment)
+        for field in ("categories", "parts"):
+            choices = settings.get("spending_rules", {}).get(field, {})
+            if source in choices:
+                previous = choices.pop(source)
+                choices.setdefault(name, previous)
         settings["rules"] = {k: name if v == source else v for k, v in settings["rules"].items()}
+        chosen = settings.get("entry_defaults", {})
+        if chosen.get("category") == source:
+            chosen["category"] = name
         if budget:
             # Rejects merges that would map one category to two bills.
             budget = budget.rename_category(source, name)
@@ -160,51 +167,72 @@ def save_category(
     return changed
 
 
-def suggestion_data(database: Database, config: AppConfig) -> dict[str, Any]:
-    """Send only a compact vocabulary to the local entry component, never the ledger."""
-    groups: dict[str, Counter] = defaultdict(Counter)
-    for row in database.list_transactions():
-        merchant = normalize_text(str(row["merchant"]))
-        category = str(row["category"])
-        if merchant and category in config.categories and category != "Uncategorized":
-            groups[merchant][category] += 1
-    merchants = {}
-    for merchant, counts in groups.items():
-        category, count = counts.most_common(1)[0]
-        if count >= 2 and count / counts.total() >= 0.8:
-            merchants[merchant] = category
-    starter = {
-        "grocer": "Food",
-        "supermarket": "Food",
-        "coffee": "Dining Out",
-        "restaurant": "Dining Out",
-        "rent": "Rent",
-        "tuition": "Tuition",
-        "pharmacy": "Medicine",
-        "uber": "Transportation",
-        "uber eats": "Dining Out",
-        "bus": "Transportation",
-    }
-    rules = {k: v for k, v in starter.items() if v in config.categories}
-    rules.update(dict(config.category_rules))
-    return {
-        "categories": list(config.categories),
-        "rules": list(rules.items()),
-        "merchants": merchants,
-    }
+# Guesses for words the ledger has nothing to say about yet.
+BUILT_IN_WORDS = {
+    "grocer": "Food",
+    "supermarket": "Food",
+    "coffee": "Dining Out",
+    "restaurant": "Dining Out",
+    "rent": "Rent",
+    "tuition": "Tuition",
+    "pharmacy": "Medicine",
+    "uber": "Transportation",
+    "uber eats": "Dining Out",
+    "bus": "Transportation",
+}
 
 
-def suggested_category(
-    database: Database, config: AppConfig, description: str, merchant: str
-) -> str:
-    """Resolve the same deterministic suggestion when a form is saved immediately."""
-    data = suggestion_data(database, config)
-    rules = sorted(data["rules"], key=lambda rule: len(rule[0]), reverse=True)
+def category_history(database: Database, config: AppConfig, as_of: date) -> CategoryHistory:
+    return CategoryHistory(
+        database.list_transactions(),
+        database.category_corrections(),
+        config.categories,
+        as_of,
+    )
+
+
+def _by_keyword(
+    rules: Iterable[tuple[str, str]],
+    config: AppConfig,
+    description: str,
+    merchant: str,
+    source: str,
+) -> Suggestion | None:
+    """The longest keyword wins, and one in the description beats one in the merchant."""
+    ranked = sorted(rules, key=lambda rule: len(rule[0]), reverse=True)
     for text in (description, merchant):
-        for keyword, category in rules:
-            if keyword_matches(keyword, text):
-                return str(category)
-    return str(data["merchants"].get(normalize_text(merchant), "Uncategorized"))
+        for keyword, category in ranked:
+            if category in config.categories and keyword_matches(keyword, text):
+                return Suggestion(category, source, (Evidence(keyword, category),))
+    return None
+
+
+def suggest_category(
+    database: Database,
+    config: AppConfig,
+    description: str,
+    merchant: str,
+    transaction_type: str,
+    as_of: date,
+) -> Suggestion:
+    """The category a new entry gets unless one is chosen, and why.
+
+    What the student said outranks what was learned, which outranks guesses.
+    """
+    # The default category is for purchases; income and transfers are not spending.
+    spending = transaction_type in ("expense", "refund")
+    fallback = config.default_category if spending else UNCATEGORIZED
+    ruled = _by_keyword(config.category_rules, config, description, merchant, "rule")
+    if ruled:
+        return ruled
+    history = category_history(database, config, as_of)
+    learned = history.suggest(description, merchant, transaction_type)
+    if learned:
+        return learned
+    guess = _by_keyword(BUILT_IN_WORDS.items(), config, description, merchant, "built-in")
+    if guess and not history.mentions(guess.evidence[0].text):
+        return guess
+    return Suggestion(fallback, "none" if fallback == UNCATEGORIZED else "default")
 
 
 def keyword_rules(database: Database, config: AppConfig) -> list[dict[str, str]]:

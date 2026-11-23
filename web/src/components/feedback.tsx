@@ -10,15 +10,23 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { Icon } from "./icons";
+
 interface Toast {
   id: number;
   text: string;
   tone: "info" | "error";
-  action?: { label: string; run: () => void | Promise<void> };
+  actions: ToastAction[];
+}
+
+interface ToastAction {
+  label: string;
+  run: () => void | Promise<void>;
 }
 
 interface ToastApi {
-  show: (text: string, options?: { tone?: Toast["tone"]; action?: Toast["action"] }) => void;
+  /** `actions` are offered in order, the likeliest first. */
+  show: (text: string, options?: { tone?: Toast["tone"]; actions?: (ToastAction | null)[] }) => void;
   error: (error: unknown) => void;
 }
 
@@ -35,8 +43,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const show = useCallback<ToastApi["show"]>(
     (text, options = {}) => {
       const id = next.current++;
-      setToasts((items) => [...items.slice(-3), { id, text, tone: options.tone ?? "info", action: options.action }]);
-      window.setTimeout(() => dismiss(id), options.action ? 12000 : 5000);
+      const actions = (options.actions ?? []).filter((action) => action !== null);
+      setToasts((items) => [...items.slice(-2), { id, text, tone: options.tone ?? "info", actions }]);
+      window.setTimeout(() => dismiss(id), actions.length ? 10000 : options.tone === "error" ? 8000 : 4000);
     },
     [dismiss],
   );
@@ -59,25 +68,30 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((toast) => (
           <div key={toast.id} className={`toast ${toast.tone}`}>
             <span className="grow">{toast.text}</span>
-            {toast.action ? (
+            {toast.actions.map((action) => (
               <button
+                key={action.label}
                 type="button"
                 className="btn small"
                 onClick={async () => {
                   dismiss(toast.id);
-                  await toast.action?.run();
+                  try {
+                    await action.run();
+                  } catch (error) {
+                    api.error(error);
+                  }
                 }}
               >
-                {toast.action.label}
+                {action.label}
               </button>
-            ) : null}
+            ))}
             <button
               type="button"
               className="btn ghost small icon"
               aria-label="Dismiss"
               onClick={() => dismiss(toast.id)}
             >
-              ×
+              <Icon name="close" size={8} />
             </button>
           </div>
         ))}
@@ -93,7 +107,7 @@ export function useToast(): ToastApi {
 }
 
 const FOCUSABLE =
-  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** A modal layer: Esc or the backdrop closes it, focus starts inside and is restored. */
 export function Modal({
@@ -110,7 +124,7 @@ export function Modal({
   const panel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    const first = panel.current?.querySelector<HTMLElement>("[autofocus], input, select, textarea") ??
+    const first = panel.current?.querySelector<HTMLElement>("[autofocus], input, textarea") ??
       panel.current?.querySelector<HTMLElement>(FOCUSABLE);
     first?.focus();
     document.body.style.overflow = "hidden";

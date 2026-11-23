@@ -82,6 +82,12 @@ class Database:
                     payload TEXT NOT NULL
                 );
 
+                -- Entries whose category was set by hand, against a suggestion or later.
+                CREATE TABLE IF NOT EXISTS category_corrections (
+                    transaction_id TEXT PRIMARY KEY,
+                    corrected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS spending_plans (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     payload TEXT NOT NULL,
@@ -170,9 +176,13 @@ class Database:
         )
         return transaction_id
 
-    def add_transaction(self, draft: TransactionDraft, *, allow_duplicate: bool = False) -> str:
+    def add_transaction(
+        self, draft: TransactionDraft, *, allow_duplicate: bool = False, corrected: bool = False
+    ) -> str:
         with self.connect() as connection:
             transaction_id = self._insert(connection, draft, allow_duplicate=allow_duplicate)
+            if transaction_id and corrected:
+                self.mark_category(connection, transaction_id, draft.validated().category)
         if transaction_id is None:
             raise DuplicateTransactionError("An identical transaction already exists")
         return transaction_id
@@ -234,6 +244,29 @@ class Database:
                 )
                 restored += 1
         return restored
+
+    def category_corrections(self) -> dict[str, str]:
+        """When each entry's category was last set by hand. Deleted entries keep theirs,
+        so an undone delete does not forget it."""
+        with self.connect() as connection:
+            return {
+                str(row["transaction_id"]): str(row["corrected_at"])
+                for row in connection.execute("SELECT * FROM category_corrections")
+            }
+
+    @staticmethod
+    def mark_category(connection: sqlite3.Connection, transaction_id: str, category: str) -> None:
+        """Remember that a category was set by hand, or that it was taken away."""
+        if category == "Uncategorized":
+            connection.execute(
+                "DELETE FROM category_corrections WHERE transaction_id = ?", (transaction_id,)
+            )
+        else:
+            connection.execute(
+                "INSERT INTO category_corrections(transaction_id) VALUES(?) ON "
+                "CONFLICT(transaction_id) DO UPDATE SET corrected_at = CURRENT_TIMESTAMP",
+                (transaction_id,),
+            )
 
     def choice_counts(self, kind: str) -> dict[str, int]:
         """How many transactions use each value of an editable choice column."""

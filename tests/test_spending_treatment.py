@@ -33,9 +33,7 @@ def test_bill_categories_default_to_bills_everywhere_and_exceptions_win():
     rows = [row("old", 180000, "Tuition", "2025-10-05"), row("new", 500)]
     result = classify_spending(rows, budget())
     assert result[0]["spending_treatment"] == "Commitments"
-    assert not result[0]["treatment_review"]
     assert result[1]["spending_treatment"] == "Everyday"
-    assert result[1]["treatment_review"]
     rules = {"transactions": {"old": {"treatment": "Everyday"}}}
     assert classify_spending(rows, budget(), rules)[0]["spending_treatment"] == "Everyday"
     by_category = {"categories": {"Tuition": "Irregular"}}

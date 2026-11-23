@@ -1,50 +1,40 @@
-import { type MouseEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
+import { Icon } from "./components/icons";
 import { QuickAdd } from "./components/QuickAdd";
+import { Empty } from "./components/ui";
 import { Budgets } from "./pages/Budgets";
-import { ImportExport } from "./pages/ImportExport";
 import { Insights } from "./pages/Insights";
 import { Overview } from "./pages/Overview";
 import { Settings } from "./pages/Settings";
 import { Transactions } from "./pages/Transactions";
-import { navigate, ROUTES, useLocation } from "./router";
+import { linkTo, navigate, ROUTES, routeOf, useLocation } from "./router";
 
-/** Follow in-app links without a page load; let modified clicks open new tabs. */
-export function linkTo(to: string) {
-  return {
-    href: to,
-    onClick: (event: MouseEvent<HTMLAnchorElement>) => {
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-      event.preventDefault();
-      navigate(to);
-    },
-  };
-}
+const NAME = "記帳";
+const [OVERVIEW, TRANSACTIONS, BUDGET, INSIGHTS, SETTINGS] = ROUTES;
 
 function isTyping(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName);
+  // An open list or calendar takes letters and digits for itself.
+  return (
+    target.isContentEditable ||
+    ["INPUT", "TEXTAREA"].includes(target.tagName) ||
+    target.closest(".popover, [role='combobox'][aria-expanded='true']") !== null
+  );
 }
-
-export function openQuickAdd(text = "") {
-  window.dispatchEvent(new CustomEvent("jizhang:quick-add", { detail: text }));
-}
-
-const MOBILE = ["/", "/transactions", "add", "/budgets", "/insights"] as const;
-const MOBILE_LABELS: Record<string, string> = {
-  "/": "Today",
-  "/transactions": "List",
-  "/budgets": "Budget",
-  "/insights": "Trends",
-};
 
 export function App() {
   const { path } = useLocation();
   const [adding, setAdding] = useState<string | null>(null);
-  const route = ROUTES.find((item) => item.path === path);
+  const route = routeOf(path);
+
+  // Import and export moved under Settings; old bookmarks still work.
+  useEffect(() => {
+    if (path === "/import") navigate("/settings/data", { replace: true });
+  }, [path]);
 
   useEffect(() => {
-    document.title = route && route.path !== "/" ? `${route.label} · 记账` : "记账";
+    document.title = route && route.path !== "/" ? `${route.label} · ${NAME}` : NAME;
   }, [route]);
 
   useEffect(() => {
@@ -59,6 +49,16 @@ export function App() {
       if (event.key === "n" || event.key === "a") {
         event.preventDefault();
         setAdding("");
+        return;
+      }
+      if (event.key === "/") {
+        event.preventDefault();
+        const search = () => document.querySelector<HTMLInputElement>("input[type='search']");
+        if (search()) search()?.focus();
+        else {
+          navigate(TRANSACTIONS.path);
+          window.setTimeout(() => search()?.focus(), 60);
+        }
         return;
       }
       const target = ROUTES.find((item) => item.key === event.key);
@@ -76,7 +76,10 @@ export function App() {
   }, []);
 
   let page;
-  switch (path) {
+  switch (route?.path) {
+    case "/":
+      page = <Overview />;
+      break;
     case "/transactions":
       page = <Transactions />;
       break;
@@ -86,65 +89,68 @@ export function App() {
     case "/insights":
       page = <Insights />;
       break;
-    case "/import":
-      page = <ImportExport />;
-      break;
     case "/settings":
       page = <Settings />;
       break;
-    case "/":
-      page = <Overview />;
-      break;
     default:
-      page = (
-        <div className="card empty">
-          <h2>Nothing here</h2>
-          <a {...linkTo("/")}>Back to the overview</a>
-        </div>
-      );
+      page =
+        path === "/import" ? null : (
+          <Empty title="Nothing here">
+            <a className="btn" {...linkTo("/")}>
+              Go to Overview
+            </a>
+          </Empty>
+        );
   }
 
   return (
     <>
-      <a className="visually-hidden" href="#main">
+      <a className="skip-link" href="#main">
         Skip to content
       </a>
       <div className="shell">
         <header className="topbar">
-          <div className="brand">
-            <a className="wordmark" lang="zh-Hant" {...linkTo("/")} aria-label="记账 home">
-              记账
-            </a>
-            <nav className="nav" aria-label="Pages">
-              {ROUTES.map((item) => (
-                <a
-                  key={item.path}
-                  {...linkTo(item.path)}
-                  aria-current={item.path === path ? "page" : undefined}
-                  title={`${item.label} (${item.key})`}
-                >
-                  {item.label}
-                </a>
-              ))}
-            </nav>
-          </div>
+          <a className="wordmark" lang="zh-Hant" {...linkTo("/")} aria-label={`${NAME} home`}>
+            {NAME}
+          </a>
+          <nav className="nav" aria-label="Pages">
+            {ROUTES.map((item) => (
+              <a
+                key={item.path}
+                {...linkTo(item.path)}
+                aria-current={item === route ? "page" : undefined}
+                title={`${item.label} (${item.key})`}
+              >
+                {item.label}
+              </a>
+            ))}
+          </nav>
           <button type="button" className="btn primary add-desktop" onClick={() => setAdding("")}>
             + Add <kbd>⌘K</kbd>
           </button>
+          <a
+            className="btn ghost icon settings-mobile"
+            {...linkTo(SETTINGS.path)}
+            aria-label={SETTINGS.label}
+            aria-current={route === SETTINGS ? "page" : undefined}
+          >
+            <Icon name={SETTINGS.icon} size={16} />
+          </a>
         </header>
-        <main id="main" key={path}>
+        <main id="main" tabIndex={-1} key={route?.path ?? path}>
           {page}
         </main>
       </div>
       <nav className="mobile-tabs" aria-label="Pages">
-        {MOBILE.map((item) =>
-          item === "add" ? (
+        {[OVERVIEW, TRANSACTIONS, null, BUDGET, INSIGHTS].map((item) =>
+          item === null ? (
             <button key="add" type="button" className="add" aria-label="Add a transaction" onClick={() => setAdding("")}>
-              +
+              <Icon name="plus" size={16} />
             </button>
           ) : (
-            <a key={item} {...linkTo(item)} aria-current={item === path ? "page" : undefined}>
-              {MOBILE_LABELS[item]}
+            <a key={item.path} {...linkTo(item.path)} aria-current={item === route ? "page" : undefined}>
+              <Icon name={item.icon} size={16} />
+              {item.short}
             </a>
           ),
         )}

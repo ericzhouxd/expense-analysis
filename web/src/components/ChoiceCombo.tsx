@@ -1,11 +1,14 @@
 import { useMutation } from "@tanstack/react-query";
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { type ChoiceKind, type ChoiceUsage, get, post } from "../api";
 import { money, shortDate } from "../lib/format";
-import { categoryColor } from "../lib/glyphs";
 import { useChoices, useRefresh } from "../queries";
 import { Modal, useToast } from "./feedback";
+import { Icon } from "./icons";
+import { Glyph } from "./instrument";
+import { namesOf, Select } from "./pickers";
+import { Popover } from "./popover";
 
 const LABELS: Record<ChoiceKind, string> = {
   category: "category",
@@ -23,17 +26,11 @@ export function ChoiceCombo({
   value,
   onChange,
   label,
-  allowCreate = true,
-  autoFocus = false,
-  compact = false,
 }: {
   kind: ChoiceKind;
   value: string;
   onChange: (value: string) => void;
-  label?: string;
-  allowCreate?: boolean;
-  autoFocus?: boolean;
-  compact?: boolean;
+  label: string;
 }) {
   const id = useId();
   const choices = useChoices();
@@ -44,6 +41,11 @@ export function ChoiceCombo({
   const [active, setActive] = useState(0);
   const [removing, setRemoving] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const list = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    if (open) list.current?.children[active]?.scrollIntoView({ block: "nearest" });
+  }, [open, active]);
 
   const entries = choices.data?.[kind] ?? [];
   const typed = query.trim();
@@ -52,8 +54,8 @@ export function ChoiceCombo({
     return needle ? entries.filter((entry) => entry.name.toLowerCase().includes(needle)) : entries;
   }, [entries, typed]);
   const exact = entries.some((entry) => entry.name.toLowerCase() === typed.toLowerCase());
-  const canCreate = allowCreate && typed.length > 0 && !exact;
-  const options = [...filtered.map((entry) => entry.name), ...(canCreate ? [`+ ${typed}`] : [])];
+  const canCreate = typed.length > 0 && !exact;
+  const options = [...filtered.map((entry) => entry.name), ...(canCreate ? [`Add “${typed}”`] : [])];
 
   const create = useMutation({
     mutationFn: (name: string) => post(`/api/choices/${kind}/save`, { name }),
@@ -81,15 +83,17 @@ export function ChoiceCombo({
       if (value === name) onChange("");
       await refresh();
       toast.show(`Removed “${name}”.`, {
-        action: result.undo
-          ? {
-              label: "Undo",
-              run: async () => {
-                await post(`/api/choices/${kind}/restore`, result.undo);
-                await refresh();
-              },
-            }
-          : undefined,
+        actions: [
+          result.undo
+            ? {
+                label: "Undo",
+                run: async () => {
+                  await post(`/api/choices/${kind}/restore`, result.undo);
+                  await refresh();
+                },
+              }
+            : null,
+        ],
       });
     } catch (error) {
       toast.error(error);
@@ -112,7 +116,7 @@ export function ChoiceCombo({
   return (
     <div className="combo">
       <label className="field">
-        {label ? <span>{label}</span> : null}
+        <span>{label}</span>
         <input
           ref={input}
           role="combobox"
@@ -120,10 +124,8 @@ export function ChoiceCombo({
           aria-controls={listId}
           aria-autocomplete="list"
           aria-activedescendant={open ? `${id}o${active}` : undefined}
-          autoFocus={autoFocus}
           value={open ? query : value}
           placeholder={open ? value || `Search or add a ${LABELS[kind]}` : `Choose ${LABELS[kind]}`}
-          style={compact ? { minHeight: 32 } : undefined}
           onFocus={() => {
             setOpen(true);
             setQuery("");
@@ -157,50 +159,50 @@ export function ChoiceCombo({
           }}
         />
       </label>
+      <Icon name="down" size={8} className="caret" />
       {open && options.length ? (
-        <ul className="combo-list" role="listbox" id={listId}>
-          {options.map((option, index) => {
-            const entry = filtered[index];
-            return (
-              <li
-                key={option}
-                id={`${id}o${index}`}
-                role="option"
-                aria-selected={index === active}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  pick(index);
-                }}
-                onMouseEnter={() => setActive(index)}
-              >
-                {kind === "category" && entry ? (
-                  <span
-                    className="led"
-                    style={{ width: 7, height: 7, background: categoryColor(entry.name) }}
-                    aria-hidden="true"
-                  />
-                ) : null}
-                <span>{option}</span>
-                {entry ? <span className="count">{entry.count || ""}</span> : null}
-                {entry && !entry.locked && !entry.default ? (
-                  <button
-                    type="button"
-                    className="remove"
-                    aria-label={`Remove ${entry.name}`}
-                    title={entry.unused ? "Remove (Shift+Delete)" : "Move its transactions, then remove"}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      void remove(entry.name);
-                    }}
-                  >
-                    ×
-                  </button>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
+        <Popover anchor={input} onClose={() => setOpen(false)} match>
+          <ul className="options" role="listbox" id={listId} aria-label={label} ref={list}>
+            {options.map((option, index) => {
+              const entry = filtered[index];
+              return (
+                <li
+                  key={option}
+                  id={`${id}o${index}`}
+                  role="option"
+                  aria-selected={index === active}
+                  className={`option ${index === active ? "active" : ""}`}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    pick(index);
+                  }}
+                  onMouseMove={() => setActive(index)}
+                >
+                  {kind === "category" && entry ? <Glyph category={entry.name} small /> : null}
+                  {entry ? null : <Icon name="plus" />}
+                  <span className="truncate grow">{option}</span>
+                  {entry?.count ? <span className="count">{entry.count}</span> : null}
+                  {entry && !entry.locked && !entry.default ? (
+                    <button
+                      type="button"
+                      className="remove"
+                      tabIndex={-1}
+                      aria-label={`Remove ${entry.name}`}
+                      title={entry.unused ? "Remove (Shift+Delete)" : "Move its transactions, then remove"}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void remove(entry.name);
+                      }}
+                    >
+                      <Icon name="close" size={8} />
+                    </button>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </Popover>
       ) : null}
       {removing ? (
         <RemoveDialog
@@ -263,23 +265,20 @@ export function RemoveDialog({
     <Modal label={`Remove ${name}`} onClose={onClose}>
       <h2>Remove “{name}”</h2>
       {usage === null ? (
-        <p className="muted">Checking where it's used…</p>
+        <p className="muted">…</p>
       ) : (
         <>
-          <p className="muted" style={{ margin: 0 }}>
-            {usage.count} transaction{usage.count === 1 ? " uses" : "s use"} this {LABELS[kind]}. Choose where
-            they should go instead.
+          <p className="muted">
+            {usage.count} transaction{usage.count === 1 ? "" : "s"}
           </p>
-          <label className="field">
-            <span>Move them to</span>
-            <select value={replacement} onChange={(event) => setReplacement(event.target.value)}>
-              {usage.replacements.map((option) => (
-                <option key={option}>{option}</option>
-              ))}
-            </select>
-          </label>
+          <Select
+            label="Move them to"
+            value={replacement}
+            options={namesOf(usage.replacements, kind === "category")}
+            onChange={setReplacement}
+          />
           {usage.latest.length ? (
-            <div className="table-wrap" style={{ maxHeight: 240, overflowY: "auto" }}>
+            <div className="table-wrap short">
               <table className="table">
                 <thead>
                   <tr>

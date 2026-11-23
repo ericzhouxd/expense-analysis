@@ -17,8 +17,10 @@ import calendar
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
+from functools import cache
 from typing import Any
 
+from .models import name_tokens, same_name
 from .spending_treatment import classify_spending
 from .university_presets import (
     UCLA_2026,
@@ -31,8 +33,13 @@ from .university_presets import (
 CADENCES = ("Monthly", "Each quarter", "Once")
 HOUSING = tuple(UCLA_2026["housing"])
 PAID_WINDOW = timedelta(days=30)
-# Payments reaching this share of a bill's amount settle it.
-PAID_SHARE = 0.9
+# How early a charge for the coming school year may be paid.
+EARLY_WINDOW = timedelta(days=60)
+# A month belongs to the school year once this many of its days do.
+MONTH_SHARE_DAYS = 10
+# Payments reaching this share of a bill's amount settle it. What the ledger
+# suggests is only a guess, so there less is enough.
+PAID_SHARE, LEARNED_SHARE = 0.9, 0.5
 
 
 def monday(day: date) -> date:
@@ -55,16 +62,96 @@ class Bill:
     cadence: str = "Monthly"
     due_day: int = 1
     due: date | None = None
+    # The student's own entry, which what the ledger suggests never replaces.
+    pinned: bool = False
+    # Only purchases named like this count; empty means the whole category.
+    match: frozenset[str] = frozenset()
+    # The rest is worked out from the ledger and never saved.
+    key: str = ""
+    why: str = ""
+    # Known due dates, for charges that keep their own calendar.
+    dates: tuple[date, ...] = ()
+    # No due dates before this one: the lease had not started.
+    since: date | None = None
+    # Days after a guessed due date before a payment counts as missing.
+    grace: int = 0
+
+    def pays(self, row: dict[str, Any]) -> bool:
+        """Whether a purchase is a payment toward this bill."""
+        return row["category"] in self.categories and (
+            not self.match or same_name(self.match, name_tokens(str(row.get("description", ""))))
+        )
+
+
+@dataclass(frozen=True)
+class CoaProfile:
+    """What decides a student's cost of attendance, besides where they live.
+
+    ``None`` means unknown until the ledger shows it.
+    """
+
+    cohort: str | None = None
+    nonresident: bool | None = None
+    insurance: bool | None = None
+    # The student's own total from MyUCLA, when it differs from the published one.
+    total_cents: int | None = None
+
+    @property
+    def complete(self) -> bool:
+        return self.cohort is not None and self.nonresident is not None
+
+    def validate(self) -> CoaProfile:
+        if self.cohort is not None and self.cohort not in UCLA_2026["cohorts"]:
+            raise ValueError("Choose the year you entered UC.")
+        for value in (self.nonresident, self.insurance):
+            if value is not None and type(value) is not bool:
+                raise ValueError("Choose your residency and health insurance.")
+        if self.total_cents is not None and (
+            type(self.total_cents) is not int or self.total_cents <= 0
+        ):
+            raise ValueError("Your cost of attendance must be more than $0.")
+        return self
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cohort": self.cohort,
+            "nonresident": self.nonresident,
+            "insurance": self.insurance,
+            "total_cents": self.total_cents,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> CoaProfile:
+        return cls(
+            cohort=payload.get("cohort"),
+            nonresident=payload.get("nonresident"),
+            insurance=payload.get("insurance"),
+            total_cents=payload.get("total_cents"),
+        ).validate()
+
+
+# What the student can settle by hand. Anything not pinned follows the ledger.
+PINNABLE = ("housing", "cohort", "residency", "insurance")
 
 
 @dataclass(frozen=True)
 class BudgetSettings:
     housing: str = "Off-campus"
-    # None follows the school's estimate; a number is the student's own line.
+    # None is automatic; a number is the student's own line.
     weekly_cents: int | None = None
     bills: tuple[Bill, ...] = field(default_factory=tuple)
+    # None until the ledger or the student says which cost of attendance is theirs.
+    coa: CoaProfile | None = None
+    # Names from PINNABLE. Values that aren't pinned are only a fallback.
+    pinned: tuple[str, ...] = ()
+    # Keys of bills the app found that the student said aren't bills.
+    dismissed: tuple[str, ...] = ()
 
     def validate(self) -> BudgetSettings:
+        if set(self.pinned) - set(PINNABLE):
+            raise ValueError("Unknown setting to keep.")
+        if self.coa is not None:
+            self.coa.validate()
         if self.housing not in HOUSING:
             raise ValueError("Choose on-campus, off-campus or commuter.")
         if self.weekly_cents is not None and (
@@ -88,6 +175,8 @@ class BudgetSettings:
             for category in bill.categories:
                 if not category.strip():
                     raise ValueError("Category names cannot be empty.")
+                if bill.match:
+                    continue
                 if category in categories:
                     raise ValueError(f"{category} is used by two bills. Map it to one.")
                 categories.add(category)
@@ -95,7 +184,13 @@ class BudgetSettings:
 
     @property
     def bill_categories(self) -> dict[str, str]:
-        return {category: bill.name for bill in self.bills for category in bill.categories}
+        """Categories that are a bill as a whole, not just purchases of one name."""
+        return {
+            category: bill.name
+            for bill in self.bills
+            if not bill.match
+            for category in bill.categories
+        }
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -111,9 +206,14 @@ class BudgetSettings:
                     "cadence": bill.cadence,
                     "due_day": bill.due_day,
                     "due": bill.due.isoformat() if bill.due else None,
+                    "pinned": bill.pinned,
+                    "match": sorted(bill.match),
                 }
                 for bill in self.bills
             ],
+            "coa": self.coa.to_dict() if self.coa else None,
+            "pinned": list(self.pinned),
+            "dismissed": list(self.dismissed),
         }
 
     @classmethod
@@ -134,9 +234,15 @@ class BudgetSettings:
                     cadence=item.get("cadence", "Monthly"),
                     due_day=item.get("due_day", 1),
                     due=date.fromisoformat(item["due"]) if item.get("due") else None,
+                    pinned=item.get("pinned", False),
+                    match=frozenset(item.get("match", ())),
                 )
                 for item in payload.get("bills", ())
             ),
+            coa=CoaProfile.from_dict(payload["coa"]) if payload.get("coa") else None,
+            # Saved before anything was automatic: those values become fallbacks.
+            pinned=tuple(payload.get("pinned", ())),
+            dismissed=tuple(payload.get("dismissed", ())),
         ).validate()
 
     def rename_category(self, source: str, name: str) -> BudgetSettings:
@@ -152,6 +258,10 @@ class BudgetSettings:
                     ),
                 )
                 for bill in self.bills
+            ),
+            dismissed=tuple(
+                f"{key[: -len(source)]}{name}" if key.split("|", 2)[2:] == [source] else key
+                for key in self.dismissed
             ),
         ).validate()
 
@@ -178,8 +288,15 @@ def _from_legacy_plan(payload: dict[str, Any]) -> BudgetSettings:
                 due=date(first // 12, first % 12 + 1, 1) if cadence == "Once" else None,
             )
         )
+    reference = payload.get("reference", {})
+    coa = None
+    if reference.get("cohort") in UCLA_2026["cohorts"] and reference.get("residency") in (
+        "CA resident",
+        "Nonresident",
+    ):
+        coa = CoaProfile(reference["cohort"], reference["residency"] == "Nonresident")
     return BudgetSettings(
-        housing=housing if housing in HOUSING else "Off-campus", bills=tuple(bills)
+        housing=housing if housing in HOUSING else "Off-campus", bills=tuple(bills), coa=coa
     ).validate()
 
 
@@ -232,7 +349,8 @@ def _quarter_period(quarter: QuarterDates) -> Period:
     )
 
 
-def school_periods() -> list[Period]:
+@cache
+def school_periods() -> tuple[Period, ...]:
     """Every week from the first known fall to the last known summer, without gaps."""
     quarters = [_quarter_period(q) for q in UCLA_QUARTERS]
     result: list[Period] = []
@@ -253,7 +371,7 @@ def school_periods() -> list[Period]:
         elif quarter.name.startswith("Spring") and str(after.year) in UCLA_SUMMER_ENDS:
             ends = date.fromisoformat(UCLA_SUMMER_ENDS[str(after.year)])
             result.append(Period(f"Summer {after.year}", "summer", after, ends))
-    return result
+    return tuple(result)
 
 
 def period_for(day: date) -> Period:
@@ -285,6 +403,77 @@ def school_year_for(day: date) -> tuple[date, date] | None:
     return None
 
 
+# UCLA's calendar keeps its weekdays from one year to the next.
+CALENDAR_YEAR = timedelta(days=364)
+
+
+@cache
+def _published_years() -> dict[tuple[date, date], tuple[date, ...]]:
+    """The first day of fall, winter and spring in each published school year."""
+    quarters = [p for p in school_periods() if p.kind == "quarter"]
+    years: dict[tuple[date, date], tuple[date, ...]] = {}
+    for index, period in enumerate(quarters):
+        span = school_year_for(period.start)
+        if period.name.startswith("Fall") and span:
+            begins = [q.quarter_begins for q in quarters[index : index + 3]]
+            years[span] = tuple(day for day in begins if day)
+    return years
+
+
+def quarter_starts(span: tuple[date, date]) -> tuple[date, ...]:
+    """The day each quarter of a school year begins: fall, winter, spring."""
+    years = _published_years()
+    if span in years:
+        return years[span]
+    nearest = min(years, key=lambda known: abs((known[0] - span[0]).days))
+    return tuple(day + (span[0] - nearest[0]) for day in years[nearest])
+
+
+def school_years_back_to(span: tuple[date, date], first: date) -> list[tuple[date, date]]:
+    """``span`` and the school years before it that reach ``first``, newest first.
+
+    Years older than the published calendar repeat its earliest one, which is
+    close enough to learn from and is never shown.
+    """
+    result = [span]
+    while True:
+        start, end = result[-1]
+        before = school_year_for(start - timedelta(days=150))
+        before = before or (start - CALENDAR_YEAR, end - CALENDAR_YEAR)
+        if before[1] < first:
+            return result
+        result.append(before)
+
+
+def _years_outside(day: date) -> int:
+    """How many calendar years ``day`` lies before (negative) or after the published ones."""
+    periods = school_periods()
+    years = 0
+    while day - CALENDAR_YEAR * years < periods[0].start:
+        years -= 1
+    while day - CALENDAR_YEAR * years > periods[-1].end:
+        years += 1
+    return years
+
+
+def learning_span(day: date) -> tuple[date, date] | None:
+    """``school_year_for`` any day, reading older and later ones off the published years."""
+    shift = CALENDAR_YEAR * _years_outside(day)
+    span = school_year_for(day - shift)
+    return (span[0] + shift, span[1] + shift) if span else None
+
+
+@cache
+def _kind(day: date) -> str | None:
+    at = day - CALENDAR_YEAR * _years_outside(day)
+    return next((p.kind for p in school_periods() if p.start <= at <= p.end), None)
+
+
+def learning_kind() -> Callable[[date], str | None]:
+    """``period_kind_lookup`` for any day, reading older and later ones off the known years."""
+    return _kind
+
+
 def school_weeks() -> int:
     """Weeks in the preset's school year (fall week 0 through spring finals)."""
     year = UCLA_2026["academic_year"][:4]
@@ -297,14 +486,16 @@ def school_weeks() -> int:
 # ── Budget ────────────────────────────────────────────────────────────────
 
 
-def weekly_line(settings: BudgetSettings) -> dict[str, Any]:
+def weekly_line(settings: BudgetSettings, safe_cents: int | None = None) -> dict[str, Any]:
+    """This week's line. ``safe_cents`` is what keeps the year inside the cost of attendance."""
     components = everyday_estimate(settings.housing)
     yearly = sum(components[name] for name in components if name != "Books")
     weeks = school_weeks()
     school = round(yearly / weeks)
+    tightened = safe_cents is not None and safe_cents < school
     return {
-        "weekly": settings.weekly_cents or school,
-        "source": "own" if settings.weekly_cents else "school",
+        "weekly": settings.weekly_cents or (safe_cents if tightened else school),
+        "source": "own" if settings.weekly_cents else "coa" if tightened else "school",
         "school_weekly": school,
         "school_yearly": yearly,
         "school_weeks": weeks,
@@ -319,6 +510,12 @@ def weekly_line(settings: BudgetSettings) -> dict[str, Any]:
 
 
 def _bill_dues(bill: Bill, period: Period) -> list[date]:
+    return [due for due in _cadence_dues(bill, period) if bill.since is None or due >= bill.since]
+
+
+def _cadence_dues(bill: Bill, period: Period) -> list[date]:
+    if bill.dates:
+        return [due for due in bill.dates if period.start <= due <= period.end]
     if bill.cadence == "Once":
         return [bill.due] if bill.due and period.start <= bill.due <= period.end else []
     if bill.cadence == "Each quarter":
@@ -355,44 +552,48 @@ def _paid_window(bill: Bill, due: date) -> tuple[date, date]:
     )
 
 
+def _due_item(bill: Bill, due: date, spending: list[dict[str, Any]], as_of: date) -> dict[str, Any]:
+    """One due date: what was paid toward it and where that leaves it."""
+    start, end = _paid_window(bill, due)
+    paid = sum(
+        net(row)
+        for row in spending
+        if start.isoformat() <= _day(row) <= min(end, as_of).isoformat() and bill.pays(row)
+    )
+    # Tax and rounding move a bill by cents, so near the amount is paid.
+    if paid > 0 and paid >= bill.amount_cents * (LEARNED_SHARE if bill.key else PAID_SHARE):
+        status = "paid"
+    elif paid > 0:
+        status = "part"
+    elif due + timedelta(days=bill.grace) < as_of:
+        status = "late"
+    elif due <= as_of + timedelta(days=7):
+        status = "soon"
+    else:
+        status = "upcoming"
+    return {
+        "name": bill.name,
+        "amount": bill.amount_cents,
+        "due": due,
+        "paid": paid,
+        "status": status,
+        "categories": list(bill.categories),
+        "cadence": bill.cadence,
+        "window_start": start,
+        "window_end": end,
+        "learned": bool(bill.key),
+    }
+
+
 def _bills(
     settings: BudgetSettings, spending: list[dict[str, Any]], period: Period, as_of: date
 ) -> list[dict[str, Any]]:
     """Every due date in the period: what needs attention first, settled ones last."""
-    result: list[dict[str, Any]] = []
-    for bill in settings.bills:
-        for due in _bill_dues(bill, period):
-            start, end = _paid_window(bill, due)
-            paid = sum(
-                net(row)
-                for row in spending
-                if row["category"] in bill.categories
-                and start.isoformat() <= _day(row) <= min(end, as_of).isoformat()
-            )
-            # Tax and rounding move a bill by cents, so near the amount is paid.
-            if paid > 0 and paid >= bill.amount_cents * PAID_SHARE:
-                status = "paid"
-            elif paid > 0:
-                status = "part"
-            elif due < as_of:
-                status = "late"
-            elif due <= as_of + timedelta(days=7):
-                status = "soon"
-            else:
-                status = "upcoming"
-            result.append(
-                {
-                    "name": bill.name,
-                    "amount": bill.amount_cents,
-                    "due": due,
-                    "paid": paid,
-                    "status": status,
-                    "categories": list(bill.categories),
-                    "cadence": bill.cadence,
-                    "window_start": start,
-                    "window_end": end,
-                }
-            )
+    result = [
+        _due_item(bill, due, spending, as_of)
+        for bill in settings.bills
+        for due in _bill_dues(bill, period)
+    ]
     # An unpaid due date before one that is already paid was most likely paid
     # too and never recorded, so it stops asking for attention.
     settled: dict[str, date] = {}
@@ -412,17 +613,74 @@ def _bills(
     )
 
 
-def bill_totals(bills: list[dict[str, Any]]) -> dict[str, int]:
-    """How many due dates are settled and what is still to pay on the rest."""
-    return {
-        "count": len(bills),
-        "paid": sum(bill["status"] == "paid" for bill in bills),
-        "outstanding": sum(
-            max(0, bill["amount"] - bill["paid"])
-            for bill in bills
-            if bill["status"] not in ("paid", "missed")
-        ),
-    }
+def school_year_dues(bill: Bill, span: tuple[date, date]) -> list[date]:
+    """The due dates that belong to a school year, oldest first.
+
+    A monthly bill pays for the month that follows its due date, so it belongs
+    once a third of that month is in the school year: September's rent counts,
+    and rent due after finals week has mostly begun does not.
+    """
+    start, end = span
+    if bill.dates:
+        return sorted(due for due in bill.dates if start - EARLY_WINDOW <= due <= end)
+    if bill.cadence != "Monthly":
+        return sorted(
+            due
+            for period in school_periods()
+            if start <= period.start <= end
+            for due in _bill_dues(bill, period)
+        )
+    dues = []
+    month = (start.replace(day=1) - timedelta(days=1)).replace(day=1)
+    while month <= end:
+        due = _monthly_due(month, bill.due_day)
+        month = (month + timedelta(days=32)).replace(day=1)
+        following = _monthly_due(month, bill.due_day)
+        covered = (min(following - timedelta(days=1), end) - max(due, start)).days + 1
+        if covered >= MONTH_SHARE_DAYS and (bill.since is None or due >= bill.since):
+            dues.append(due)
+    return dues
+
+
+def school_year_bills(
+    settings: BudgetSettings,
+    spending: list[dict[str, Any]],
+    span: tuple[date, date],
+    as_of: date,
+) -> list[tuple[Bill, dict[str, Any]]]:
+    """Each bill's due dates in the school year, with what was paid toward them."""
+    return [
+        (bill, _due_item(bill, due, spending, as_of))
+        for bill in settings.bills
+        for due in school_year_dues(bill, span)
+    ]
+
+
+def next_due(bill: Bill, rows: list[dict[str, Any]], as_of: date) -> date | None:
+    """The first due date nobody has paid yet, from a month back to a year ahead."""
+    spending = [
+        row
+        for row in rows
+        if row["transaction_type"] in ("expense", "refund") and _day(row) <= as_of.isoformat()
+    ]
+    first = as_of - PAID_WINDOW
+    dues: list[date] = []
+    if bill.dates or bill.cadence == "Once":
+        dues = list(bill.dates) or ([bill.due] if bill.due else [])
+    elif bill.cadence == "Each quarter":
+        dues = [p.quarter_begins for p in school_periods() if p.quarter_begins]
+    else:
+        month = first.replace(day=1)
+        for _ in range(14):
+            dues.append(_monthly_due(month, bill.due_day))
+            month = (month + timedelta(days=32)).replace(day=1)
+    for due in sorted(dues):
+        if due < first or (bill.since is not None and due < bill.since):
+            continue
+        item = _due_item(bill, due, spending, as_of)
+        if item["status"] != "paid" and not (due < as_of and item["status"] == "part"):
+            return due
+    return None
 
 
 def period_kind_lookup() -> Callable[[date], str | None]:
@@ -444,11 +702,21 @@ def term_budget(
     as_of: date,
     rules: dict | None = None,
     day: date | None = None,
+    lines: dict[date, int] | None = None,
 ) -> dict[str, Any]:
-    """The weekly picture for the period holding ``day`` (default: today)."""
+    """The weekly picture for the period holding ``day`` (default: today).
+
+    ``lines`` holds the safe amount each Monday set, so a later, tighter line
+    never turns an earlier week that was fine into one that wasn't.
+    """
     settings = settings or BudgetSettings()
-    line = weekly_line(settings)
-    weekly = line["weekly"]
+    lines = lines or {}
+    this_week = monday(as_of)
+    line = weekly_line(settings, lines.get(this_week))
+
+    def line_for(week: date) -> int:
+        return int(weekly_line(settings, lines.get(min(week, this_week)))["weekly"])
+
     period = period_for(day or as_of)
     classified = classify_spending(rows, settings, rules)
     spending = [
@@ -474,6 +742,7 @@ def term_budget(
         end = start + timedelta(days=6)
         state = "past" if end < as_of else "current" if start <= as_of else "future"
         spent = spent_between(start, end) if state != "future" else 0
+        weekly = line_for(start)
         week = {
             "start": start,
             "end": end,
@@ -511,12 +780,6 @@ def term_budget(
             and period.start.isoformat() <= _day(r) <= period.end.isoformat()
         )
 
-    big_stuff = [
-        r
-        for r in spending
-        if r["spending_treatment"] == "Irregular"
-        and period.start.isoformat() <= _day(r) <= period.end.isoformat()
-    ]
     bills = _bills(settings, spending, period, as_of)
     periods = school_periods()
     names = [p.name for p in periods]
@@ -537,8 +800,8 @@ def term_budget(
             "spent": spent_between(start, end),
             "estimate": line["school_yearly"],
             "estimate_to_date": round(line["school_yearly"] * elapsed / days),
-            "line_to_date": weekly * len(completed),
-            "saved": sum(weekly - spent_between(w, w + timedelta(days=6)) for w in completed),
+            "line_to_date": sum(line_for(w) for w in completed),
+            "saved": sum(line_for(w) - spent_between(w, w + timedelta(days=6)) for w in completed),
             "weeks_done": len(completed),
             "weeks": days // 7,
         }
@@ -566,12 +829,10 @@ def term_budget(
             "bills": total("Commitments"),
             "big_stuff": total("Irregular"),
             "saved": sum(w["saved"] for w in weeks if w["saved"] is not None),
-            "line_to_date": weekly * sum(w["state"] == "past" for w in weeks),
+            "line_to_date": sum(w["line"] for w in weeks if w["state"] == "past"),
             "weeks_done": sum(w["state"] == "past" for w in weeks),
         },
         "bills": bills,
-        "bill_totals": bill_totals(bills),
-        "big_stuff": sorted(big_stuff, key=_day, reverse=True),
         "year": year,
     }
 

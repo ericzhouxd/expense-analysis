@@ -107,6 +107,138 @@ def test_create_suggests_a_category_unless_chosen(client: TestClient) -> None:
     assert manual["category"] == "Food"
 
 
+def test_suggestions_say_why_and_learn_from_corrections(
+    client: TestClient, database: Database
+) -> None:
+    for day in (2, 3, 4):
+        database.add_transaction(_draft(date(2026, 11, day), "Boba", 6_00, "Food"))
+
+    def suggest(description: str) -> dict:
+        body = {"description": description}
+        return client.post("/api/suggest", json=body, headers=HEADERS).json()
+
+    assert suggest("boba") == {
+        "category": "Food",
+        "source": "name",
+        "evidence": [{"text": "boba", "category": "Food", "count": 3}],
+        "share": 1.0,
+    }
+    # Left alone, or picked to match, nothing is corrected.
+    assert _create(client, description="Boba", category="")["category"] == "Food"
+    _create(
+        client,
+        description="Boba",
+        amount_cents=7_00,
+        category="Food",
+        category_manual=True,
+        category_chosen=True,
+    )
+    # Repeating an earlier entry carries its category over; that is not a correction.
+    _create(
+        client, description="Boba", amount_cents=8_00, category="Dining Out", category_manual=True
+    )
+    assert database.category_corrections() == {}
+    assert suggest("Boba")["category"] == "Food"
+    fixed = _create(
+        client,
+        description="Boba",
+        amount_cents=9_00,
+        category="Dining Out",
+        category_manual=True,
+        category_chosen=True,
+    )
+    assert list(database.category_corrections()) == [fixed["id"]]
+    assert suggest("Boba")["category"] == "Dining Out"
+
+
+def test_changing_a_category_later_is_a_correction(client: TestClient, database: Database) -> None:
+    ids = [
+        database.add_transaction(_draft(date(2026, 11, day), "Boba", 6_00, "Food"))
+        for day in (2, 3, 4)
+    ]
+    row = next(r for r in client.get("/api/transactions").json()["rows"] if r["id"] == ids[0])
+    before = {
+        key: row[key]
+        for key in (
+            "transaction_date",
+            "description",
+            "amount_cents",
+            "category",
+            "account",
+            "payment_method",
+            "merchant",
+            "transaction_type",
+            "notes",
+        )
+    }
+
+    def change(old: dict, **values) -> dict:
+        new = {**old, **values}
+        body = {"id": ids[0], "before": old, "after": new}
+        assert client.post("/api/transactions/edit", json=body, headers=HEADERS).status_code == 200
+        return new
+
+    edited = change(before, notes="nothing to do with it")
+    assert database.category_corrections() == {}
+    edited = change(edited, category="Dining Out")
+    assert list(database.category_corrections()) == [ids[0]]
+    body = {"description": "Boba"}
+    learned = client.post("/api/suggest", json=body, headers=HEADERS).json()
+    assert learned["category"] == "Dining Out"
+    # A deleted entry that is brought back is still a correction.
+    deleted = client.post("/api/transactions/delete", json={"ids": [ids[0]]}, headers=HEADERS)
+    client.post("/api/transactions/restore", json={"rows": deleted.json()["rows"]}, headers=HEADERS)
+    learned = client.post("/api/suggest", json=body, headers=HEADERS).json()
+    assert learned["category"] == "Dining Out"
+    # Taking the category away takes the correction with it.
+    change(edited, category="Uncategorized")
+    assert database.category_corrections() == {}
+
+
+def test_entry_defaults_can_be_changed(client: TestClient, database: Database) -> None:
+    assert client.get("/api/bootstrap").json()["defaults"] == {
+        "category": "Uncategorized",
+        "payment_method": "Apple Pay",
+        "account": "Checking",
+        "transaction_type": "expense",
+    }
+
+    def change(kind: str, value: str):
+        return client.put(f"/api/defaults/{kind}", json={"value": value}, headers=HEADERS)
+
+    assert change("account", "Cash").json() == {"previous": "Checking"}
+    assert change("payment_method", "Card").json() == {"previous": "Apple Pay"}
+    assert change("category", "Food").status_code == 200
+    assert change("transaction_type", "income").status_code == 200
+    chosen = client.get("/api/bootstrap").json()["defaults"]
+    assert list(chosen.values()) == ["Food", "Card", "Cash", "income"]
+    listed = client.get("/api/choices").json()
+    assert listed["defaults"] == chosen
+    for kind in ("account", "payment_method", "category"):
+        assert [c["name"] for c in listed[kind] if c["default"]] == [chosen[kind]]
+        # A default is in use, so it is not removed by accident.
+        removal = client.post(
+            f"/api/choices/{kind}/delete", json={"source": chosen[kind]}, headers=HEADERS
+        )
+        assert removal.status_code == 400
+    # A rule still wins, and only spending nothing matches takes the default category.
+    assert _create(client)["category"] == "Dining Out"
+    assert _create(client, description="Zzz")["category"] == "Food"
+    paid = _create(client, description="Zzz", transaction_type="income")
+    assert paid["category"] == "Uncategorized"
+    assert change("account", "Nowhere").status_code == 400
+    assert change("notes", "x").status_code == 400
+    # A rename takes the default with it.
+    client.post(
+        "/api/choices/category/save", json={"name": "Eats", "source": "Food"}, headers=HEADERS
+    )
+    client.post(
+        "/api/choices/account/save", json={"name": "Wallet", "source": "Cash"}, headers=HEADERS
+    )
+    chosen = client.get("/api/bootstrap").json()["defaults"]
+    assert (chosen["category"], chosen["account"]) == ("Eats", "Wallet")
+
+
 def test_duplicates_conflict_until_confirmed(client: TestClient) -> None:
     _create(client)
     body = {
@@ -197,6 +329,13 @@ def test_transaction_filters_and_amount_search(client: TestClient, seeded: Datab
     assert food[0]["spending_treatment"] == "Everyday"
 
 
+def test_bootstrap_offers_repeat_purchases(client: TestClient, seeded: Database) -> None:
+    frequent = client.get("/api/bootstrap").json()["frequent"]
+    assert [item["description"] for item in frequent] == ["Chipotle lunch", "Ralphs groceries"]
+    assert frequent[0]["amount_cents"] == 12_85
+    assert frequent[0]["last"] == "2026-11-09"
+
+
 def test_overview_shows_this_weeks_line_and_the_month(client: TestClient, seeded: Database) -> None:
     data = client.get("/api/overview").json()
     assert data["month"] == "2026-11"
@@ -217,24 +356,29 @@ def test_overview_shows_this_weeks_line_and_the_month(client: TestClient, seeded
     assert [c["category"] for c in data["categories"]][0] == "Transportation"
     assert data["ticker"]["label"] == "TODAY"
     assert data["ticker"]["total"] == 12_85 + 16_40 - 4_00
-    phone = next(b for b in data["bills"] if b["due"] == "2026-11-02")
-    assert phone["name"] == "Phone"
-    assert phone["status"] == "paid"
-    assert phone["window_start"] <= "2026-11-02" <= phone["window_end"]
-    # October's phone bill was never recorded; November's payment retires it.
-    assert [(b["due"], b["status"]) for b in data["bills"]] == [("2026-11-02", "paid")]
-    assert data["bill_totals"] == {"count": 1, "paid": 1, "outstanding": 0}
     month = data["comparisons"]["month"]
     assert (month["prior_start"], month["prior_end"]) == ("2026-10-01", "2026-10-09")
     assert month["change"] == data["spent"] - 52_00
     assert [w["week"] for w in data["weekly"]][-2:] == ["2026-11-02", "2026-11-09"]
     assert data["weekly"][-1]["label"] == "Week 7"
     assert data["weekly"][-1]["spent"] == week["spent"]
-    # Nothing here needs doing: categories are sorted except the unreviewed ones.
-    assert [signal.get("action") for signal in data["signals"]] == ["treatments"]
-    assert data["upcoming"] == []
+    term = client.get("/api/budget").json()["weeks"]
+    finished = [w["saved"] for w in term if w["saved"] is not None]
+    assert finished and data["budget"]["weeks"] == finished
+    # Nothing here needs doing, sorting categories least of all.
+    assert data["signals"] == []
+    # The last 30 days' largest purchases: no phone bill, no refund, whatever the scope.
+    largest = [(r["description"], r["amount_cents"]) for r in data["largest"]]
+    assert largest == [
+        ("Metro card", 46_20),
+        ("Ralphs groceries", 18_40),
+        ("Target", 16_40),
+        ("Chipotle lunch", 12_85),
+    ]
+    assert data["largest_days"] == 30
     every = client.get("/api/overview", params={"scope": "all"}).json()
     assert every["spent"] == data["spent"] + 35_00
+    assert every["largest"] == data["largest"]
 
 
 def test_overview_of_a_past_month_has_no_weekly_line(client: TestClient, seeded: Database) -> None:
@@ -243,6 +387,8 @@ def test_overview_of_a_past_month_has_no_weekly_line(client: TestClient, seeded:
     assert data["as_of"] == "2026-10-31"
     assert data["budget"] is None
     assert data["ticker"]["label"] == "LATEST"
+    assert [r["amount_cents"] for r in data["largest"]] == [40_00, 12_00]
+    assert data["largest_days"] is None
 
 
 def test_empty_ledger_overview_is_predictable(client: TestClient) -> None:
@@ -253,6 +399,7 @@ def test_empty_ledger_overview_is_predictable(client: TestClient) -> None:
     assert data["budget"]["week"]["spent"] == 0
     assert data["categories"] == []
     assert data["monthly"] == []
+    assert data["largest"] == []
 
 
 def test_insights_forecast_is_integer_cents(client: TestClient, seeded: Database) -> None:
@@ -297,35 +444,173 @@ def test_insights_and_budget_payloads(client: TestClient, seeded: Database) -> N
     assert [w["label"] for w in budget["weeks"]][:2] == ["Week 0", "Week 1"]
     assert budget["week"]["label"] == "Week 7"
     assert budget["line"]["source"] == "own"
-    assert budget["saved_settings"] is True
+    assert {fact["key"] for fact in budget["auto"]["facts"]} == {
+        "housing",
+        "cohort",
+        "residency",
+        "insurance",
+    }
     assert {p["name"] for p in budget["periods"]} >= {"Fall quarter 2026", "Summer 2026"}
     earlier = client.get("/api/budget", params={"period": budget["period"]["previous"]}).json()
     assert earlier["period"]["name"] == "Summer 2026"
     assert earlier["week"] is None
 
 
+def _save(client: TestClient, **change):
+    """Send the settings page's whole state back with one change, as the page does."""
+    auto = client.get("/api/budget").json()["auto"]
+    chosen = {f["key"]: f["value"] if f["source"] == "yours" else None for f in auto["facts"]}
+    fields = ("name", "amount_cents", "categories", "cadence", "due_day", "due", "pinned", "match")
+    body = {
+        **chosen,
+        "weekly_cents": auto["weekly_cents"],
+        "total_cents": auto["total_cents"],
+        "bills": [{k: b[k] for k in fields} for b in auto["bills"] if not b["key"]],
+        "dismissed": auto["dismissed_keys"],
+        **change,
+    }
+    return client.put("/api/budget/settings", json=body, headers=HEADERS)
+
+
 def test_budget_settings_save_and_validate(client: TestClient, database: Database) -> None:
     empty = client.get("/api/budget").json()
-    assert empty["saved_settings"] is False
     assert empty["line"]["source"] == "school"
-    assert "Off-campus" in empty["housing_options"]
-    body = {
-        "housing": "On-campus",
-        "weekly_cents": None,
-        "bills": [
-            {"name": "Rent", "amount_cents": 1450_00, "categories": ["Rent"], "due_day": 1},
-            {"name": "Books", "amount_cents": 200_00, "cadence": "Once", "due": "2027-01-04"},
-        ],
-    }
-    saved = client.put("/api/budget/settings", json=body, headers=HEADERS)
+    housing = next(f for f in empty["auto"]["facts"] if f["key"] == "housing")
+    assert (housing["text"], housing["source"]) == ("Off-campus", "default")
+    assert {o["value"] for o in housing["options"]} == {"On-campus", "Off-campus", "Commuter"}
+    bills = [
+        {"name": "Rent", "amount_cents": 1450_00, "categories": ["Rent"], "due_day": 1},
+        {"name": "Books", "amount_cents": 200_00, "cadence": "Once", "due": "2027-01-04"},
+        {
+            "name": "Music",
+            "amount_cents": 9_99,
+            "categories": ["Entertainment"],
+            "match": ["Music Plan 2026"],
+        },
+    ]
+    saved = _save(client, housing="On-campus", weekly_cents=250_00, bills=bills)
     assert saved.status_code == 200, saved.text
     settings = database.get_budget_settings()
     assert settings is not None
-    assert settings.housing == "On-campus"
-    assert [b.name for b in settings.bills] == ["Rent", "Books"]
+    assert settings.housing == "On-campus" and settings.pinned == ("housing",)
+    assert [b.name for b in settings.bills] == ["Rent", "Books", "Music"]
+    assert all(b.pinned for b in settings.bills)
+    assert settings.bills[2].match == {"music", "plan"}
+    assert settings.weekly_cents == 250_00 and settings.coa is None
+    # One change later everything else is still as it was.
+    assert _save(client, total_cents=60_000_00).status_code == 200
+    again = database.get_budget_settings()
+    assert again is not None and again.coa is not None
+    assert (again.bills, again.weekly_cents) == (settings.bills, 250_00)
+    assert again.coa.total_cents == 60_000_00
+    assert _save(client, housing=None, weekly_cents=None).status_code == 200
+    automatic = database.get_budget_settings()
+    assert automatic is not None and automatic.pinned == () and automatic.weekly_cents is None
+    for wrong in (
+        {"bills": [{"name": "X", "amount_cents": 1, "cadence": "Once"}]},
+        {"housing": "Houseboat"},
+        {"cohort": "1999–00"},
+        {"residency": "maybe"},
+        {"bills": [bills[0], {**bills[0], "name": "Other"}]},
+    ):
+        assert _save(client, **wrong).status_code in (400, 422)
+
+
+def test_the_budget_needs_no_setup(client: TestClient, database: Database) -> None:
+    for index, month in enumerate(("09", "10", "11")):
+        database.add_transaction(_draft(date(2026, int(month), 1), f"Rent {month}", 900_00, "Rent"))
+        database.add_transaction(
+            _draft(date(2026, int(month), 5), "Music plan", 11_99, "Entertainment")
+        )
+        database.add_transaction(
+            _draft(date(2026, int(month), 7 + index), "Film", 15_00 + 400 * index, "Fun")
+        )
+    database.add_transaction(_draft(date(2026, 9, 1), "Fall tuition", 18_600_00, "Tuition"))
+    budget = client.get("/api/budget").json()
+    facts = {f["key"]: f for f in budget["auto"]["facts"]}
+    assert facts["housing"]["value"] == "Off-campus" and facts["housing"]["source"] == "learned"
+    assert (facts["cohort"]["value"], facts["residency"]["value"]) == ("2026–27", True)
+    assert facts["insurance"]["text"] == "Waived UC SHIP"
+    assert budget["coa"]["ready"] is True
+    learned = {b["name"]: b for b in budget["auto"]["bills"]}
+    assert set(learned) == {"Rent", "Music plan", "Tuition & fees"}
+    assert learned["Rent"]["next_due"] == "2026-12-01" and learned["Rent"]["why"]
+    assert {b["name"] for b in budget["bills"] if b["learned"]} >= {"Rent", "Music plan"}
+    table = {t["category"]: t for t in budget["treatments"]}
+    assert table["Rent"]["treatment"] == "Commitments" and not table["Rent"]["pinned"]
+    # Purchases show how they count on the transactions page too, whatever is filtered.
+    rows = client.get("/api/transactions", params={"category": "Entertainment"}).json()["rows"]
+    assert {r["spending_treatment"] for r in rows} == {"Commitments"}
+    # Set aside, a bill is an ordinary purchase again; brought back, it is a bill.
+    key = learned["Music plan"]["key"]
+    assert _save(client, dismissed=[key]).status_code == 200
+    budget = client.get("/api/budget").json()
+    assert "Music plan" not in {b["name"] for b in budget["auto"]["bills"]}
+    assert [b["name"] for b in budget["auto"]["dismissed"]] == ["Music plan"]
+    assert _save(client, dismissed=[]).status_code == 200
+    # Changing a learned bill makes it the student's own.
+    own = {"name": "Rent", "amount_cents": 950_00, "categories": ["Rent"], "due_day": 3}
+    assert _save(client, bills=[own]).status_code == 200
+    rents = [b for b in client.get("/api/budget").json()["auto"]["bills"] if b["name"] == "Rent"]
+    assert [(b["amount_cents"], b["key"], b["pinned"]) for b in rents] == [(950_00, "", True)]
+
+
+def test_a_learned_bill_that_does_not_show_up_is_mentioned_gently(
+    client: TestClient, database: Database
+) -> None:
+    for month in (8, 9, 10):
+        database.add_transaction(_draft(date(2026, month, 1), "Landlord rent", 900_00, "Rent"))
+    signal = client.get("/api/overview").json()["signals"][0]
+    assert (signal["tone"], signal["action"]) == ("warn", "bills")
+    assert (signal["label"], signal["value"]) == ("Not seen yet", "Rent · Nov 1")
+    assert "Rent was expected around Nov 1" in signal["text"]
+
+
+def test_cost_of_attendance_profile_parts_and_banner(client: TestClient, seeded: Database) -> None:
+    budget = client.get("/api/budget").json()
+    assert (budget["coa"]["ready"], budget["coa"]["reason"]) == (False, "profile")
+    # Nothing nags before a profile is known.
+    actions = [s.get("action") for s in client.get("/api/overview").json()["signals"]]
+    assert "coa" not in actions
+    saved = _save(client, cohort="2025–26", residency=False, total_cents=1000_00)
+    assert saved.status_code == 200, saved.text
+    settings = seeded.get_budget_settings()
+    assert settings is not None and settings.coa is not None
+    # Insurance was left automatic, which counts UC SHIP until something shows otherwise.
+    assert settings.coa.insurance is None and settings.pinned == ("cohort", "residency")
+    coa = client.get("/api/budget").json()["coa"]
+    assert coa["ready"] is True and coa["verdict"] == "over" and coa["line"] == 1000_00
+    assert coa["start"] == "2026-09-21"
+    assert coa["projected"] == sum(coa["layers"].values())
+    signals = client.get("/api/overview").json()["signals"]
+    banner = next(s for s in signals if s.get("action") == "coa")
+    assert banner["tone"] == "up" and "cost of attendance" in banner["text"]
+    assert banner["label"] == "Cost of attendance" and banner["value"].endswith(" over")
+    past = client.get("/api/overview", params={"month": "2026-10"}).json()["signals"]
+    assert "coa" not in [s.get("action") for s in past]
+
+    saved = client.put(
+        "/api/spending-rules/categories",
+        json={"categories": {"Food": "Everyday"}, "parts": {"Cell Phone": "Housing"}},
+        headers=HEADERS,
+    )
+    assert saved.status_code == 200
+    table = {t["category"]: t for t in client.get("/api/budget").json()["treatments"]}
+    assert (table["Cell Phone"]["part"], table["Cell Phone"]["part_pinned"]) == ("Housing", True)
+    assert (table["Food"]["part"], table["Food"]["part_pinned"]) == ("Food", False)
+    assert table["Food"]["pinned"] and not table["Transportation"]["pinned"]
+    assert seeded.get_spending_rules()["auto"] is True
+    # Saving treatments alone keeps the parts, and a rename carries them along.
+    client.put("/api/spending-rules/categories", json={"categories": {}}, headers=HEADERS)
+    client.post(
+        "/api/choices/category/save",
+        json={"name": "Mobile", "source": "Cell Phone", "spending_class": "Personal"},
+        headers=HEADERS,
+    )
+    assert seeded.get_spending_rules()["parts"] == {"Mobile": "Housing"}
     bad = client.put(
-        "/api/budget/settings",
-        json={**body, "bills": [{"name": "X", "amount_cents": 1, "cadence": "Once"}]},
+        "/api/spending-rules/categories",
+        json={"categories": {}, "parts": {"Food": "Yachts"}},
         headers=HEADERS,
     )
     assert bad.status_code == 400

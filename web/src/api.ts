@@ -60,7 +60,6 @@ export interface Transaction {
   created_at?: string;
   updated_at?: string;
   spending_treatment?: string;
-  treatment_review?: boolean;
 }
 
 export type DraftFields = Pick<
@@ -95,14 +94,41 @@ export interface Bootstrap {
   categories: { name: string; spending_class: string }[];
   accounts: string[];
   payment_methods: string[];
-  default_account: string;
-  default_payment_method: string;
+  defaults: EntryDefaults;
   transaction_types: TransactionType[];
   treatments: string[];
   transaction_count: number;
-  rules: [string, string][];
-  merchants: Record<string, string>;
+  /** Purchases made more than once, likeliest to be repeated first, as last recorded. */
+  frequent: FrequentEntry[];
   merchant_names: Record<string, string>;
+}
+
+/** What a new entry starts with; the category is for purchases nothing else sorts. */
+export interface EntryDefaults {
+  category: string;
+  payment_method: string;
+  account: string;
+  transaction_type: TransactionType;
+}
+
+/** The category a new entry gets unless one is chosen, and why. */
+export interface Suggestion {
+  category: string;
+  source: "rule" | "name" | "words" | "merchant" | "built-in" | "default" | "none";
+  evidence: { text: string; category: string; count: number }[];
+  /** How much of the evidence agrees, from 0 to 1. */
+  share: number;
+}
+
+export interface FrequentEntry {
+  description: string;
+  merchant: string;
+  amount_cents: number;
+  category: string;
+  account: string;
+  payment_method: string;
+  count: number;
+  last: string;
 }
 
 export interface Comparison {
@@ -114,27 +140,6 @@ export interface Comparison {
   end: string;
   prior_start: string;
   prior_end: string;
-}
-
-/** One due date of a bill inside the period being viewed. */
-export interface BillDue {
-  name: string;
-  amount: number;
-  due: string;
-  paid: number;
-  /** `part`: something was paid but not the amount; `missed`: unpaid, yet a later due date is paid. */
-  status: "paid" | "part" | "late" | "soon" | "upcoming" | "missed";
-  categories: string[];
-  cadence: Cadence;
-  /** The days whose payments count toward this due date. */
-  window_start: string;
-  window_end: string;
-}
-
-export interface BillTotals {
-  count: number;
-  paid: number;
-  outstanding: number;
 }
 
 export type Cadence = "Monthly" | "Each quarter" | "Once";
@@ -157,11 +162,14 @@ export interface CurrentWeek extends Week {
   days: { date: string; spent: number; future: boolean }[];
 }
 
-/** A banner for something that needs doing; `action` says where to fix it. */
+/** A warning tile for something that needs doing; `action` says where to fix it. */
 export interface Signal {
   tone: "up" | "warn" | "ok" | "info";
+  label: string;
+  value: string;
+  /** The whole of it, for screen readers. */
   text: string;
-  action?: "uncategorized" | "treatments" | "bills" | "duplicates";
+  action?: "uncategorized" | "bills" | "duplicates" | "coa";
   /** Transactions filter for the `duplicates` action. */
   filter?: { start: string; end: string; q: string };
 }
@@ -177,24 +185,22 @@ export interface Overview {
   spent: number;
   month_spent: number;
   treatment_totals: Record<string, number>;
-  review_count: number;
   budget: null | {
     week: Pick<CurrentWeek, "label" | "start" | "end" | "line" | "spent" | "left" | "days_left" | "per_day" | "pace" | "days">;
     period: string;
-    saved: number;
-    weeks_done: number;
-    source: "school" | "own";
+    /** What each finished week of the term came to against its line. */
+    weeks: number[];
+    source: LineSource;
   };
   baseline: null | { total: number; month: string };
   comparisons: { month: Comparison; week: Comparison; year: Comparison };
   days: { date: string; spent: number; count: number; future: boolean }[];
   categories: { category: string; spent: number }[];
-  bills: BillDue[];
-  bill_totals: BillTotals;
-  /** Repeating charges expected in the next two weeks that no bill covers. */
-  upcoming: { name: string; amount: number; due: string; frequency: string }[];
   ticker: { label: string; items: { name: string; amount: number; refund: boolean }[]; total: number };
   recent: Transaction[];
+  /** The largest purchases, bills left out: the last `largest_days`, or the whole of a finished month. */
+  largest: Transaction[];
+  largest_days: number | null;
   monthly: { month: string; spent: number; rolling_3: number }[];
   weekly: { week: string; end: string; label: string; spent: number; rolling_4: number }[];
   signals: Signal[];
@@ -207,24 +213,6 @@ export interface Insights {
   as_of: string;
   has_transactions: boolean;
   drivers: { category: string; current: number; previous: number; change: number; percent: number | null }[];
-  recurring: {
-    merchant: string;
-    frequency: string;
-    occurrences: number;
-    average: number;
-    interval_days: number;
-    last_seen: string;
-    next_expected: string;
-    status: string;
-  }[];
-  anomalies: {
-    date: string;
-    description: string;
-    category: string;
-    amount: number;
-    typical: number;
-    score: number;
-  }[];
   cash_flow: { month: string; income: number; expenses: number; refunds: number; net: number }[];
   terms: { period: string; kind: PeriodKind; start: string; spent: number; weeks: number }[];
   monthly: { month: string; spent: number; rolling_3: number; rolling_6: number; rolling_12: number }[];
@@ -269,6 +257,7 @@ export interface SchoolYear {
   weeks: number;
 }
 
+/** A bill the student entered, as it is saved. */
 export interface BillSetting {
   name: string;
   amount_cents: number;
@@ -276,19 +265,130 @@ export interface BillSetting {
   cadence: Cadence;
   due_day: number;
   due: string | null;
+  pinned: boolean;
+  /** Words naming the purchase, when the category holds other things too. */
+  match: string[];
 }
 
-export interface BudgetSettings {
-  housing: string;
-  weekly_cents: number | null;
-  bills: BillSetting[];
+/** Any bill in use. Ones found in the ledger have a `key`; the student's own don't. */
+export interface AutoBill extends BillSetting {
+  key: string;
+  yearly: boolean;
+  why: string;
+  next_due: string | null;
 }
+
+export type FactKey = "housing" | "cohort" | "residency" | "insurance";
+export type FactValue = string | boolean;
+
+/** One answer the app worked out, unless the source is `yours`. */
+export interface Fact {
+  key: FactKey;
+  label: string;
+  value: FactValue | null;
+  text: string;
+  source: "yours" | "learned" | "earlier" | "default";
+  why: string;
+  auto_text: string;
+  auto_why: string;
+  options: { value: FactValue; text: string }[];
+}
+
+/** How the projection did at this point of an earlier school year. */
+export interface TrackRecord {
+  label: string;
+  projected: number;
+  actual: number;
+  miss: number;
+  percent: number;
+}
+
+export interface AutoBudget {
+  facts: Fact[];
+  bills: AutoBill[];
+  /** Found in the ledger, but the student said they aren't bills. */
+  dismissed: AutoBill[];
+  dismissed_keys: string[];
+  weekly_cents: number | null;
+  total_cents: number | null;
+  /** Purchases from this amount on count as big stuff. */
+  big_cents: number;
+  record: TrackRecord[];
+}
+
+/** What the student settles by hand; null is automatic. */
+export interface BudgetChoices {
+  housing: string | null;
+  cohort: string | null;
+  residency: boolean | null;
+  insurance: boolean | null;
+  weekly_cents: number | null;
+  total_cents: number | null;
+  bills: BillSetting[];
+  dismissed: string[];
+}
+
+/** The school's estimate, the student's own amount, or lowered to stay inside the cost of attendance. */
+export type LineSource = "school" | "own" | "coa";
+
+/** From certain to guessed: what makes up the projected year. */
+export type CoaLayer = "recorded" | "due" | "everyday" | "one_offs" | "assumed";
+
+interface CoaBase {
+  school: string;
+  year: string;
+  source_url: string;
+  verified_on: string;
+}
+
+/** The whole school year against the cost of attendance, or why there is no answer. */
+export type CoaOutlook =
+  | (CoaBase & { ready: false; reason: "year" | "profile" })
+  | (CoaBase & {
+      ready: true;
+      start: string;
+      end: string;
+      /** The last day the ledger covers; later days are forecast. */
+      through: string;
+      complete: boolean;
+      line: number;
+      own_total: boolean;
+      adjustment: number;
+      layers: Record<CoaLayer, number>;
+      projected: number;
+      low: number;
+      high: number;
+      margin: number;
+      /** 0 to 1. */
+      chance: number;
+      verdict: "over" | "close" | "under";
+      weekly: null | {
+        typical: number;
+        /** Lands on the line if everything else goes as expected. */
+        safe: number;
+        /** Leaves room for costs that can't be known yet. */
+        sure: number;
+        possible: boolean;
+        weeks_left: number;
+      };
+      changed_on: string | null;
+      history_weeks: number;
+      parts: {
+        part: string;
+        recorded: number;
+        projected: number;
+        published: number;
+        difference: number;
+        assumed: number;
+      }[];
+      notes: string[];
+    });
 
 export interface Budget {
   as_of: string;
   line: {
     weekly: number;
-    source: "school" | "own";
+    source: LineSource;
     school_weekly: number;
     school_yearly: number;
     school_weeks: number;
@@ -300,8 +400,7 @@ export interface Budget {
     source_url: string;
     verified_on: string;
   };
-  settings: BudgetSettings;
-  saved_settings: boolean;
+  auto: AutoBudget;
   period: {
     name: string;
     kind: PeriodKind;
@@ -323,17 +422,21 @@ export interface Budget {
     line_to_date: number;
     weeks_done: number;
   };
-  bills: BillDue[];
-  bill_totals: BillTotals;
   /** This week against the same weekdays of last week; null outside the current period. */
   comparison: Comparison | null;
-  big_stuff: Transaction[];
   year: SchoolYear | null;
   periods: { name: string; kind: PeriodKind; start: string; end: string }[];
-  housing_options: string[];
-  housing_estimates: Record<string, { school_weekly: number; school_yearly: number }>;
+  coa: CoaOutlook;
+  coa_parts: string[];
   cadences: Cadence[];
-  treatments: { category: string; treatment: string; saved: boolean }[];
+  treatments: {
+    category: string;
+    treatment: string;
+    pinned: boolean;
+    why: string;
+    part: string;
+    part_pinned: boolean;
+  }[];
   treatment_options: string[];
   category_default: string;
 }
@@ -353,6 +456,8 @@ export interface Choices {
   category: ChoiceEntry[];
   account: ChoiceEntry[];
   payment_method: ChoiceEntry[];
+  defaults: EntryDefaults;
+  transaction_types: TransactionType[];
   keyword_rules: { keyword: string; category: string; source: string }[];
 }
 
