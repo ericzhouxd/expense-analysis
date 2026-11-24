@@ -1,6 +1,5 @@
 import {
   type CSSProperties,
-  type MouseEvent,
   type ReactNode,
   useEffect,
   useRef,
@@ -8,6 +7,7 @@ import {
   useSyncExternalStore,
 } from "react";
 
+import { money, versus } from "../lib/format";
 import { categoryColor, glyphShadow, hot, rgba } from "../lib/glyphs";
 
 const MOTION_QUERY = "(prefers-reduced-motion: reduce)";
@@ -24,51 +24,20 @@ export function useReducedMotion(): boolean {
   );
 }
 
-/** The glass-covered LED panel; it tilts slightly toward the pointer. */
+/** The glass-covered LED panel. */
 export function Housing({
   children,
   label,
   className = "",
   scanlines = true,
-  tilt = true,
 }: {
   children: ReactNode;
   label: string;
   className?: string;
   scanlines?: boolean;
-  tilt?: boolean;
 }) {
-  const reduced = useReducedMotion();
-  const ref = useRef<HTMLDivElement>(null);
-  const frame = useRef(0);
-  const pointer = useRef({ x: 0, y: 0 });
-
-  // The panel tilts slightly toward the pointer; one style write per frame.
-  function move(event: MouseEvent<HTMLDivElement>) {
-    pointer.current = { x: event.clientX, y: event.clientY };
-    if (frame.current) return;
-    frame.current = requestAnimationFrame(() => {
-      frame.current = 0;
-      const element = ref.current;
-      if (!element) return;
-      const box = element.getBoundingClientRect();
-      const x = (pointer.current.x - box.left) / box.width;
-      const y = (pointer.current.y - box.top) / box.height;
-      element.style.setProperty("--rx", `${((0.5 - y) * 2.4).toFixed(2)}deg`);
-      element.style.setProperty("--ry", `${((x - 0.5) * 3.2).toFixed(2)}deg`);
-    });
-  }
-
-  function leave() {
-    cancelAnimationFrame(frame.current);
-    frame.current = 0;
-    for (const name of ["--rx", "--ry"]) ref.current?.style.removeProperty(name);
-  }
-
-  useEffect(() => () => cancelAnimationFrame(frame.current), []);
-
   return (
-    <div ref={ref} className={`housing ${className}`} onMouseMove={tilt && !reduced ? move : undefined} onMouseLeave={leave}>
+    <div className={`housing ${className}`}>
       <span className="screw tl" aria-hidden="true" />
       <span className="screw tr" aria-hidden="true" />
       <span className="screw bl" aria-hidden="true" />
@@ -155,10 +124,10 @@ export function HeroNumber({
 }: {
   value: string;
   ghost?: string;
-  tone?: "accent" | "over";
+  tone?: "accent" | "over" | "amber" | "plain";
 }) {
   return (
-    <div className={`hero boot ${tone === "over" ? "over" : ""}`}>
+    <div className={`hero boot ${tone === "accent" ? "" : tone}`}>
       <div className="hero-bloom" aria-hidden="true" />
       <span className="hero-ghost" aria-hidden="true">
         <Ghost text={ghost ?? value} />
@@ -172,6 +141,11 @@ export function HeroNumber({
   );
 }
 
+export function Readouts({ children }: { children: ReactNode }) {
+  return <div className="readouts">{children}</div>;
+}
+
+/** A figure in its own sunken window: label, LED digits, and at most one small part beside them. */
 export function Readout({
   label,
   value,
@@ -180,17 +154,106 @@ export function Readout({
 }: {
   label: string;
   value: string;
-  tone?: "coral" | "sage" | "amber" | "text";
-  sub?: string;
+  tone?: "coral" | "sage" | "amber" | "plain";
+  sub?: ReactNode;
 }) {
   return (
     <div className="well">
-      <span className="label">{label}</span>
-      <span className={`value ${tone ?? ""}`}>
-        {tone === "text" ? value : <Odometer text={value} />}
+      <span className="well-main">
+        <span className="label">{label}</span>
+        <span className={`value ${tone ?? ""}`}>
+          <Odometer text={value} />
+        </span>
       </span>
-      {sub ? <span className="sub">{sub}</span> : null}
+      {sub}
     </div>
+  );
+}
+
+/** A change as an instrument gives it: which way, how much, and against what. */
+export function Delta({
+  change,
+  percent,
+  than,
+  brief = false,
+}: {
+  change: number;
+  percent?: number | null;
+  than?: string;
+  /** Only the share, when there is one. */
+  brief?: boolean;
+}) {
+  const share = percent === null || percent === undefined || !Number.isFinite(percent) ? null : Math.round(Math.abs(percent));
+  return (
+    <span
+      className={`delta ${change > 0 ? "up" : change < 0 ? "ok" : ""}`}
+      role="text"
+      aria-label={versus(change, than ?? "before", percent)}
+    >
+      <b>
+        {change > 0 ? "▲" : change < 0 ? "▼" : "="} {brief && share !== null ? `${share}%` : money(Math.abs(change))}
+      </b>
+      {share === null || brief ? null : <b>{share}%</b>}
+      {than ? <i>{than}</i> : null}
+    </span>
+  );
+}
+
+/** A selector's lamps: every position is marked and the one in use is lit. */
+export function Lamps<T extends string>({
+  label,
+  options,
+  value,
+  tone = "",
+}: {
+  label: string;
+  options: readonly { value: T; label: string }[];
+  value: T;
+  tone?: "coral" | "sage" | "amber" | "blue" | "";
+}) {
+  return (
+    <span className={`lamps ${tone}`} role="img" aria-label={`${label}: ${options.find((item) => item.value === value)?.label ?? value}`}>
+      {options.map((item) => (
+        <span key={item.value} className={item.value === value ? "on" : ""}>
+          <i />
+          {item.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** A row of small LEDs, one for each of something. */
+export function Pips({ label, pips }: { label: string; pips: ("ok" | "up" | "warn" | "off")[] }) {
+  return (
+    <span
+      className="pips"
+      role="img"
+      aria-label={label}
+      style={{ "--columns": pips.length > 4 ? Math.ceil(pips.length / (pips.length > 10 ? 3 : 2)) : pips.length } as CSSProperties}
+    >
+      {pips.map((pip, index) => (
+        <i key={index} className={pip} />
+      ))}
+    </span>
+  );
+}
+
+const BAND = 15;
+
+/** Low to high as a strip of dots with the expected place lit. */
+export function Band({ low, at, high, format }: { low: number; at: number; high: number; format: (cents: number) => string }) {
+  const place = high > low ? Math.round(((at - low) / (high - low)) * (BAND - 1)) : 0;
+  return (
+    <span className="band" role="img" aria-label={`Likely ${format(low)} to ${format(high)}`}>
+      <span>{format(low)}</span>
+      <span className="dots">
+        {Array.from({ length: BAND }, (_, index) => (
+          <i key={index} className={index === place ? "on" : ""} />
+        ))}
+      </span>
+      <span>{format(high)}</span>
+    </span>
   );
 }
 
@@ -204,14 +267,21 @@ export function PaceMeter({
   pace,
   segments = 30,
   label,
-  paceLabel,
+  mark,
+  cap,
+  today,
 }: {
   value: number;
   capacity: number;
   pace: number | null;
   segments?: number;
   label: string;
-  paceLabel?: string;
+  /** Engraved at the pace. */
+  mark?: string;
+  /** Engraved over the far end. */
+  cap?: string;
+  /** Engraves the days of the week under the segments, with this one (0 is Monday) lit. */
+  today?: number;
 }) {
   const unit = capacity > 0 ? capacity / segments : 0;
   const lit = unit > 0 ? Math.min(segments, Math.max(0, Math.round(value / unit))) : 0;
@@ -227,7 +297,12 @@ export function PaceMeter({
       ? `${label}`
       : `${label}. ${Math.round((value / Math.max(1, capacity)) * 100)}% used; pace marker at ${Math.round((pace / Math.max(1, capacity)) * 100)}%.`;
   return (
-    <div className="stack tight">
+    <div className="meter">
+      {cap ? (
+        <div className="meter-cap" aria-hidden="true">
+          {cap} <i>▼</i>
+        </div>
+      ) : null}
       <div
         className="segments"
         role="img"
@@ -247,35 +322,51 @@ export function PaceMeter({
           );
         })}
       </div>
-      {paceIndex !== null && paceLabel ? (
+      {today === undefined ? null : (
+        <div className="meter-days" aria-hidden="true">
+          {["M", "T", "W", "T", "F", "S", "S"].map((day, index) => (
+            <span key={index} className={index === today ? "on" : index < today ? "past" : ""}>
+              {day}
+            </span>
+          ))}
+        </div>
+      )}
+      {paceIndex !== null && mark ? (
         <div className="pace-marker" aria-hidden="true">
-          <span style={{ left: `${(paceIndex / segments) * 100}%` }}>▲ {paceLabel}</span>
+          <span className={paceIndex > segments / 2 ? "before" : ""} style={{ left: `${(paceIndex / segments) * 100}%` }}>
+            <i>▲</i>
+            <span>{mark}</span>
+          </span>
         </div>
       ) : null}
     </div>
   );
 }
 
-export function Ticker({ label, items }: { label: string; items: ReactNode[] }) {
+/** Purchases drifting past a fixed label, repeated so there is never a gap. */
+export function Ticker({ label, total, items }: { label: string; total: string; items: ReactNode[] }) {
   const reduced = useReducedMotion();
   if (!items.length) return null;
-  const duration = Math.max(18, items.length * 5);
+  const repeats = Math.max(1, Math.ceil(10 / items.length));
+  const copy = (name: string, hidden: boolean) =>
+    items.map((item, index) => (
+      <span key={`${name}${index}`} aria-hidden={hidden || undefined}>
+        {item}
+      </span>
+    ));
   return (
-    <div className="ticker" aria-label={label}>
-      <div
-        className="marquee"
-        style={{ "--marquee-duration": `${duration}s` } as CSSProperties}
-      >
-        {items.map((item, index) => (
-          <span key={`a${index}`}>{item}</span>
-        ))}
-        {reduced
-          ? null
-          : items.map((item, index) => (
-              <span key={`b${index}`} aria-hidden="true">
-                {item}
-              </span>
-            ))}
+    <div className="ticker" role="group" aria-label={`${label}, ${total}`}>
+      <span className="ticker-label" aria-hidden="true">
+        {label} <b>{total}</b>
+      </span>
+      <div className="ticker-window">
+        <div
+          className="marquee"
+          style={{ "--marquee-duration": `${Math.max(24, items.length * repeats * 4)}s` } as CSSProperties}
+        >
+          {copy("a", false)}
+          {reduced ? null : Array.from({ length: repeats * 2 - 1 }, (_, index) => copy(`b${index}`, true))}
+        </div>
       </div>
     </div>
   );
@@ -384,130 +475,4 @@ export function Led({ color, lit, pulse = false }: { color: string; lit: boolean
         boxShadow: `inset 0 0 0 1px ${rgba(color, 0.45)}, 0 0 6px ${rgba(color, 0.18)}`,
       };
   return <span className={`led ${pulse ? "pulse" : ""}`} style={style} aria-hidden="true" />;
-}
-
-export function Card({
-  title,
-  hint,
-  actions,
-  children,
-  className = "",
-  id,
-}: {
-  title: string;
-  hint?: ReactNode;
-  actions?: ReactNode;
-  children: ReactNode;
-  className?: string;
-  id?: string;
-}) {
-  return (
-    <section className={`card ${className}`} aria-label={title} id={id}>
-      <div className="card-head">
-        <h2>
-          <span className="led-dot" aria-hidden="true" />
-          {title}
-        </h2>
-        {hint ? <span className="hint">{hint}</span> : null}
-        {actions}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-export function Collapsible({
-  title,
-  hint,
-  children,
-  open,
-  id,
-}: {
-  title: string;
-  hint?: ReactNode;
-  children: ReactNode;
-  open?: boolean;
-  id?: string;
-}) {
-  return (
-    <details className="card" open={open} id={id}>
-      <summary>
-        <div className="card-head">
-          <h2>
-            <span className="led-dot" aria-hidden="true" />
-            {title}
-          </h2>
-          {hint ? <span className="hint">{hint}</span> : null}
-        </div>
-      </summary>
-      <div className="stack">{children}</div>
-    </details>
-  );
-}
-
-export function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-  label,
-}: {
-  value: T;
-  options: { value: T; label: string }[];
-  onChange: (value: T) => void;
-  label: string;
-}) {
-  return (
-    <div className="seg" role="group" aria-label={label}>
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          aria-pressed={option.value === value}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** ◀ LABEL ▶ with a split-flap label: used to step through months and quarters. */
-export function Stepper({
-  label,
-  onPrevious,
-  onNext,
-  canPrevious,
-  canNext,
-  name,
-  from,
-}: {
-  label: string;
-  onPrevious: () => void;
-  onNext: () => void;
-  canPrevious: boolean;
-  canNext: boolean;
-  name: string;
-  from?: string;
-}) {
-  return (
-    <div className="stepper" role="group" aria-label={name}>
-      <button type="button" onClick={onPrevious} disabled={!canPrevious} aria-label={`Previous ${name}`}>
-        ◀
-      </button>
-      <SplitFlap text={label} from={from} />
-      <button type="button" onClick={onNext} disabled={!canNext} aria-label={`Next ${name}`}>
-        ▶
-      </button>
-    </div>
-  );
-}
-
-export function Empty({ title, children }: { title: string; children?: ReactNode }) {
-  return (
-    <div className="empty">
-      <h2>{title}</h2>
-      {children}
-    </div>
-  );
 }

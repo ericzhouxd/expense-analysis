@@ -6,11 +6,13 @@ from datetime import date
 from pathlib import Path
 
 from .analytics import period_metrics, savings_summary, transactions_frame
-from .categories import effective_config, suggestion_data
-from .config import OUTPUT_DIR, AppConfig, load_config
+from .categories import category_history, effective_config, suggest_category
+from .coa_outlook import coa_outlook
+from .config import OUTPUT_DIR, TRANSACTION_TYPES, AppConfig, load_config
 from .database import Database, DuplicateTransactionError
 from .import_export import CsvDecodeError, export_csv, preview_csv
 from .models import TransactionDraft, format_dollars, parse_amount_cents, validate_transaction_date
+from .replay import smart_budget
 from .spending_summary import spending_summary
 from .spending_treatment import classify_spending
 from .term_budget import term_budget
@@ -41,8 +43,7 @@ def add_main() -> None:
     parser.add_argument(
         "--type",
         dest="transaction_type",
-        choices=("expense", "refund", "income", "transfer"),
-        default="expense",
+        choices=TRANSACTION_TYPES,
     )
     parser.add_argument("--notes", default="")
     arguments = parser.parse_args()
@@ -55,7 +56,18 @@ def add_main() -> None:
             arguments.transaction_date or _prompt("Date", date.today().isoformat())
         )
         amount_cents = abs(parse_amount_cents(arguments.amount or _prompt("Amount")))
-        requested = arguments.category or _prompt("Category", "Uncategorized")
+        transaction_type = arguments.transaction_type or config.default_transaction_type
+        requested = arguments.category or _prompt(
+            "Category",
+            suggest_category(
+                database,
+                config,
+                description,
+                arguments.merchant,
+                transaction_type,
+                date.today(),
+            ).category,
+        )
         category = config.category_for("", provided=requested)
         if category == "Uncategorized" and requested.strip().casefold() != "uncategorized":
             print(f"Unknown category {requested!r}; storing it as Uncategorized.")
@@ -69,7 +81,7 @@ def add_main() -> None:
             account=account,
             payment_method=method,
             merchant=arguments.merchant,
-            transaction_type=arguments.transaction_type,
+            transaction_type=transaction_type,
             notes=arguments.notes,
         )
         database.add_transaction(draft)
@@ -81,19 +93,23 @@ def add_main() -> None:
 def analyze_main() -> None:
     database, config = _local_setup()
     rows = database.list_transactions()
-    frame = transactions_frame(
-        classify_spending(rows, database.get_budget_settings(), database.get_spending_rules()),
-        config,
+    today = date.today()
+    smart = smart_budget(
+        database.get_budget_settings(),
+        database.get_spending_rules(),
+        rows,
+        today,
+        config.fixed_categories,
     )
+    budget, rules = smart.auto.settings, smart.auto.rules
+    frame = transactions_frame(classify_spending(rows, budget, rules), config)
     if frame.empty:
         print("No transactions yet.")
         return
 
-    metrics = period_metrics(frame[frame["spending_treatment"].eq("Everyday")], date.today())
-    budget = database.get_budget_settings()
-    rules = database.get_spending_rules()
-    summary = spending_summary(budget, rows, date.today(), rules)
-    week = term_budget(budget, rows, date.today(), rules)["week"]
+    metrics = period_metrics(frame[frame["spending_treatment"].eq("Everyday")], today)
+    summary = spending_summary(budget, rows, today, rules)
+    week = term_budget(budget, rows, today, rules, lines=smart.lines)["week"]
     savings = savings_summary(frame)
     partial = " (partial)" if metrics.is_partial else ""
     print(f"{metrics.period_label}{partial}")
@@ -106,6 +122,14 @@ def analyze_main() -> None:
     if week is not None:
         left, line = format_dollars(week["left"]), format_dollars(week["line"])
         print(f"  {week['label']}: {left} left of {line}")
+    coa = coa_outlook(budget, rows, today, rules, smart.auto.habits)
+    if coa["ready"]:
+        margin = coa["margin"]
+        print(
+            f"  School year:       {format_dollars(coa['projected'])} expected of "
+            f"{coa['school']}'s {format_dollars(coa['line'])} "
+            f"({format_dollars(abs(margin))} {'under' if margin >= 0 else 'over'})"
+        )
     income = float(savings["income"] or 0.0)
     if income:
         print(f"  Recorded income:   ${income:,.2f}")
@@ -132,7 +156,7 @@ def import_main() -> None:
             arguments.path.read_bytes(),
             config,
             database.existing_fingerprints(),
-            merchant_suggestions=suggestion_data(database, config)["merchants"],
+            suggest=category_history(database, config, date.today()).category_for,
             sign_convention=(
                 f"negative_expense_{arguments.negative_expenses}"
                 if arguments.negative_expenses

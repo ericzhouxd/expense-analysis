@@ -1,5 +1,17 @@
 /** Category colors and 8×8 pixel glyphs drawn as box-shadows. */
 
+/** The panel's lights: lime is spending, sage under, coral over, amber an estimate, blue expected. */
+export const LED = {
+  accent: "#D4F53C",
+  coral: "#FF8A70",
+  amber: "#F2C14E",
+  sage: "#9FD39B",
+  blue: "#7CB8FF",
+  violet: "#C7A6FF",
+  off: "#59614F",
+  dim: "#8E9687",
+} as const;
+
 const NAMED: Record<string, string> = {
   food: "#9FD39B",
   "dining out": "#FF9A80",
@@ -69,11 +81,13 @@ const BY_CATEGORY: Record<string, string> = {
   entertainment: "ticket",
   rent: "house",
   "housing and meal plan": "house",
+  "campus housing": "house",
   housing: "house",
   tuition: "cap",
   "school fees": "cap",
   "cell phone": "phone",
   medicine: "pill",
+  health: "pill",
   insurance: "cross",
   clothes: "shirt",
   flight: "plane",
@@ -84,6 +98,7 @@ const BY_CATEGORY: Record<string, string> = {
   utilities: "bolt",
   internet: "wave",
   stationery: "pencil",
+  books: "pencil",
   laundry: "shirtWash",
   church: "cross",
   income: "arrow",

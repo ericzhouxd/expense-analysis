@@ -26,24 +26,26 @@ export function wholeMoney(cents: number): string {
   return `${sign}$${Math.round(Math.abs(cents) / 100).toLocaleString("en-US")}`;
 }
 
-export function percent(value: number | null | undefined, signed = true): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
-  const text = `${Math.abs(value).toFixed(1)}%`;
-  if (!signed) return text;
-  return value < 0 ? `${MINUS}${text}` : value > 0 ? `+${text}` : text;
-}
-
 /**
  * A change against an earlier figure, worded the same way wherever it appears:
- * "▲ $12.00 (8.0%) more than Oct 1–14".
+ * "▲ $12.00 (8%) more than Oct 1–14".
  */
 export function versus(change: number, than: string, percentChange?: number | null): string {
   if (change === 0) return `same as ${than}`;
   const share =
     percentChange === null || percentChange === undefined || !Number.isFinite(percentChange)
       ? ""
-      : ` (${percent(Math.abs(percentChange), false)})`;
+      : ` (${Math.round(Math.abs(percentChange))}%)`;
   return `${change > 0 ? "▲" : "▼"} ${money(Math.abs(change))}${share} ${change > 0 ? "more" : "less"} than ${than}`;
+}
+
+/** An axis limit and step that land on round amounts, with at most `lines` gridlines. */
+export function axis(largest: number, lines = 3): { top: number; ticks: number[] } {
+  const raw = Math.max(1, largest) / lines;
+  const power = 10 ** Math.floor(Math.log10(raw));
+  const step = ([1, 2, 2.5, 5, 10].find((size) => size * power >= raw) ?? 10) * power;
+  const count = Math.max(1, Math.ceil(largest / step));
+  return { top: count * step, ticks: Array.from({ length: count + 1 }, (_, index) => index * step) };
 }
 
 /** Parse what someone typed as dollars into positive integer cents, or null. */

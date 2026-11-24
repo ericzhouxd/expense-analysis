@@ -78,12 +78,6 @@ def spending_summary(
             t: net_spending([r for r in rows if r["spending_treatment"] == t], start, as_of)
             for t in TREATMENTS
         },
-        review_count=sum(
-            r["treatment_review"]
-            for r in rows
-            if r["transaction_type"] in ("expense", "refund")
-            and start.isoformat() <= str(r["transaction_date"])[:10] <= as_of.isoformat()
-        ),
         everyday_month_comparison=comparison(everyday, start, as_of, prior_month, prior_month_end),
         everyday_week_comparison=comparison(
             everyday, week_start, as_of, week_start - timedelta(days=7), as_of - timedelta(days=7)

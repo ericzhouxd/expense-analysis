@@ -4,16 +4,19 @@ from datetime import date
 import pytest
 
 from expense_analysis.categories import (
+    category_history,
     effective_config,
     preferences,
     save_category,
-    suggestion_data,
+    suggest_category,
 )
 from expense_analysis.config import AppConfig
 from expense_analysis.database import Database
 from expense_analysis.import_export import preview_csv
 from expense_analysis.models import TransactionDraft
 from expense_analysis.term_budget import Bill, BudgetSettings
+
+TODAY = date(2026, 10, 12)
 
 
 @pytest.fixture
@@ -68,14 +71,15 @@ def test_custom_categories_work_without_transactions_and_merchant_history_is_con
                 date(2026, 10, i + 1), f"Synthetic {i}", 1000, category, merchant="Mixed store"
             )
         )
-    assert "mixed store" not in suggestion_data(database, updated)["merchants"]
+    assert category_history(database, updated, TODAY).category_for("Zzz", "Mixed store") is None
     database.add_transaction(
         TransactionDraft(date(2026, 10, 5), "Another", 1000, "Food", merchant="Food store")
     )
     database.add_transaction(
         TransactionDraft(date(2026, 10, 6), "Another 2", 1000, "Food", merchant="Food store")
     )
-    assert suggestion_data(database, updated)["merchants"]["food store"] == "Food"
+    learned = category_history(database, updated, TODAY)
+    assert learned.category_for("Zzz", "Food store") == "Food"
 
 
 def test_merchant_history_auto_detects_categories_during_import(database):
@@ -86,23 +90,34 @@ def test_merchant_history_auto_detects_categories_during_import(database):
                 date(2026, 10, day), "Synthetic", 1000, "Food", merchant="Green Grocer"
             )
         )
-    suggestions = suggestion_data(database, config)["merchants"]
     preview = preview_csv(
-        b"Description,Date,Amount,Category,Merchant\n"
-        b"Synthetic,2026-10-10,9.99,Surprise,Green Grocer\n",
+        b"Description,Date,Amount,Category,Merchant\nOther,2026-10-10,9.99,Surprise,Green Grocer\n",
         config,
-        merchant_suggestions=suggestions,
+        suggest=category_history(database, config, TODAY).category_for,
     )
     assert preview.valid_drafts[0].category == "Food"
 
 
-def test_save_time_suggestion_matches_live_priority(database):
-    from expense_analysis.categories import suggested_category
-
+def test_rules_beat_what_was_learned_which_beats_built_in_words(database):
     config = AppConfig(category_rules=(("coffee beans", "Food"),))
-    assert suggested_category(database, config, "Coffee beans", "Coffee shop") == "Food"
-    assert suggested_category(database, config, "coffee", "") == "Dining Out"
-    assert suggested_category(database, config, "unmatched synthetic", "") == "Uncategorized"
+
+    def suggest(description, merchant=""):
+        found = suggest_category(database, config, description, merchant, "expense", TODAY)
+        return found.category, found.source
+
+    assert suggest("Coffee beans", "Coffee shop") == ("Food", "rule")
+    assert suggest("coffee") == ("Dining Out", "built-in")
+    assert suggest("unmatched synthetic") == ("Uncategorized", "none")
+    for day, category in ((1, "Food"), (2, "Tech")):
+        database.add_transaction(
+            TransactionDraft(date(2026, 10, day), "Coffee machine", 1000, category)
+        )
+    # Entries of its own say it is unclear, so the built-in word does not decide.
+    assert suggest("coffee") == ("Uncategorized", "none")
+    for day in (3, 4, 5, 6):
+        database.add_transaction(TransactionDraft(date(2026, 10, day), "Coffee pods", 1000, "Food"))
+    assert suggest("Coffee pods refill") == ("Food", "words")
+    assert suggest("Coffee beans machine") == ("Food", "rule")
 
 
 def test_keyword_rules_can_be_listed_removed_and_restored(database):

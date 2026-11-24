@@ -68,3 +68,5 @@ def apply_changes(database: Database, changes: list[TransactionChange]) -> None:
                     "WHERE id = ?",
                     (*values.values(), change.transaction_id),
                 )
+                if draft.category != change.before.category:
+                    database.mark_category(connection, change.transaction_id, draft.category)

@@ -87,6 +87,9 @@ class AppConfig:
     payment_methods: tuple[str, ...] = DEFAULT_METHODS
     default_account: str = "Checking"
     default_payment_method: str = "Apple Pay"
+    # For an entry no rule or merchant gives a category to.
+    default_category: str = "Uncategorized"
+    default_transaction_type: str = "expense"
     category_rules: tuple[tuple[str, str], ...] = ()
     category_aliases: tuple[tuple[str, str], ...] = ()
     academic_calendar: AcademicCalendar = field(default_factory=AcademicCalendar)

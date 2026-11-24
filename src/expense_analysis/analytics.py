@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import calendar
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from .config import AppConfig
-from .models import comparable_day
+from .models import comparable_day, normalize_text
 
 # Weight of the newest month in the forecast's running level; each older month
 # counts 60% as much as the one after it.
@@ -20,6 +20,10 @@ FORECAST_MINIMUM_MONTHS = 2
 # before its own rate counts as much as the overall average.
 FORECAST_SHRINK_DAYS = 7
 AVERAGE_MONTH_DAYS = 365.25 / 12
+# A repeat purchase counts half as much toward what is offered first after two months.
+FREQUENT_HALF_LIFE_DAYS = 60
+# How far back the largest purchases reach while a month is still going.
+LARGEST_DAYS = 30
 FORECAST_COLUMNS = ("month", "expected", "low", "high", "spent", "partial")
 
 TRANSACTION_COLUMNS = (
@@ -478,133 +482,6 @@ def spending_drivers(frame: pd.DataFrame, as_of: date | None = None) -> pd.DataF
 
 
 # (label, shortest, longest) median gap in days for each recognised billing cycle.
-RECURRING_CYCLES = (
-    ("Weekly", 5, 10),
-    ("Biweekly", 11, 17),
-    ("Monthly", 20, 40),
-    ("Every 2 months", 55, 70),
-    ("Quarterly", 75, 105),
-    ("Yearly", 340, 390),
-)
-# Calendar cycles step by months so a charge on the 1st stays on the 1st.
-_CYCLE_MONTHS = {"Monthly": 1, "Every 2 months": 2, "Quarterly": 3, "Yearly": 12}
-
-
-def _merchant_key(value: str) -> str:
-    # Drop reference numbers and dates ("#48213", "05/2026") but keep short digits
-    # that are part of a name, such as "7-Eleven".
-    cleaned = re.sub(r"\d+/\d+(?:/\d+)?|#?\d{3,}", " ", value.casefold())
-    return " ".join(token for token in cleaned.split() if any(c.isalpha() for c in token))
-
-
-def recurring_transactions(frame: pd.DataFrame, as_of: date | None = None) -> pd.DataFrame:
-    """Charges with a stable amount and a recognised cycle.
-
-    ``status`` is "Possibly stopped" once a charge is more than half a cycle overdue
-    on ``as_of`` (default: the latest transaction date).
-    """
-    expenses = spending_frame(frame)
-    columns = [
-        "merchant",
-        "category",
-        "frequency",
-        "occurrences",
-        "average_amount",
-        "median_interval_days",
-        "last_seen",
-        "next_expected",
-        "status",
-    ]
-    if expenses.empty:
-        return pd.DataFrame(columns=columns)
-
-    as_of = as_of or frame["transaction_date"].max().date()
-    working = expenses[expenses["transaction_type"].eq("expense")].copy()
-    merchant = working["merchant"].fillna("").astype(str).str.strip()
-    description = working["description"].fillna("").astype(str)
-    source = merchant.mask(merchant.eq(""), description)
-    working["merchant_key"] = source.map(_merchant_key)
-    recurring: list[dict[str, object]] = []
-    for key, group in working.groupby("merchant_key"):
-        group = group.sort_values("transaction_date")
-        if not key or len(group) < 3:
-            continue
-        dates = pd.to_datetime(group["transaction_date"])
-        intervals = dates.diff().dt.days.dropna()
-        if intervals.empty:
-            continue
-        median_interval = float(intervals.median())
-        mean_amount = float(group["amount"].mean())
-        coefficient_of_variation = (
-            float(group["amount"].std(ddof=0) / mean_amount) if mean_amount else 1
-        )
-        frequency = next(
-            (label for label, low, high in RECURRING_CYCLES if low <= median_interval <= high),
-            None,
-        )
-        if frequency is None or coefficient_of_variation > 0.2:
-            continue
-        last_seen = group["transaction_date"].max().date()
-        months = _CYCLE_MONTHS.get(frequency)
-        next_expected = (
-            (pd.Timestamp(last_seen) + pd.DateOffset(months=months)).date()
-            if months
-            else last_seen + timedelta(days=round(median_interval))
-        )
-        overdue = (as_of - next_expected).days
-        recurring.append(
-            {
-                "merchant": str(key).title(),
-                "category": str(group["category"].mode().iloc[0]),
-                "frequency": frequency,
-                "occurrences": len(group),
-                "average_amount": mean_amount,
-                "median_interval_days": median_interval,
-                "last_seen": last_seen,
-                "next_expected": next_expected,
-                "status": "Possibly stopped" if overdue > median_interval / 2 else "Active",
-            }
-        )
-    return pd.DataFrame(recurring, columns=columns).sort_values("average_amount", ascending=False)
-
-
-def spending_anomalies(frame: pd.DataFrame) -> pd.DataFrame:
-    expenses = spending_frame(frame)
-    columns = [
-        "transaction_date",
-        "description",
-        "category",
-        "amount",
-        "typical_amount",
-        "anomaly_score",
-    ]
-    if expenses.empty:
-        return pd.DataFrame(columns=columns)
-
-    anomalies: list[pd.DataFrame] = []
-    for _, group in expenses[expenses["transaction_type"].eq("expense")].groupby("category"):
-        if len(group) < 4:
-            continue
-        median = float(group["amount"].median())
-        mad = float((group["amount"] - median).abs().median())
-        scored = group.copy()
-        if mad:
-            scored["anomaly_score"] = 0.6745 * (scored["amount"] - median) / mad
-        else:
-            scored["anomaly_score"] = np.where(
-                scored["amount"] > max(median * 1.5, median + 25), 10.0, 0.0
-            )
-        scored["typical_amount"] = median
-        anomalies.append(scored[scored["anomaly_score"] >= 3.5])
-    if not anomalies:
-        return pd.DataFrame(columns=columns)
-    return (
-        pd.concat(anomalies, ignore_index=True)[columns]
-        .sort_values("anomaly_score", ascending=False)
-        .reset_index(drop=True)
-    )
-
-
 def savings_summary(frame: pd.DataFrame) -> dict[str, float | None]:
     if frame.empty:
         return {"income": 0.0, "net_outflow": 0.0, "savings": 0.0, "savings_rate": None}
@@ -620,3 +497,60 @@ def savings_summary(frame: pd.DataFrame) -> dict[str, float | None]:
         "savings": savings,
         "savings_rate": savings_rate,
     }
+
+
+def frequent_entries(
+    rows: list[dict[str, Any]], as_of: date, limit: int = 40
+) -> list[dict[str, Any]]:
+    """Purchases made more than once, the likeliest to be made again first.
+
+    Each carries how it was last recorded, so it can be logged again without
+    typing it out. Recent purchases weigh more than old ones.
+    """
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        day = date.fromisoformat(str(row["transaction_date"])[:10])
+        key = normalize_text(str(row["description"]))
+        if row["transaction_type"] == "expense" and key and day <= as_of:
+            groups.setdefault(key, []).append({**row, "day": day})
+    ranked = []
+    for items in groups.values():
+        if len(items) < 2:
+            continue
+        score = sum(0.5 ** ((as_of - item["day"]).days / FREQUENT_HALF_LIFE_DAYS) for item in items)
+        latest = max(items, key=lambda item: (item["day"], str(item.get("created_at") or "")))
+        ranked.append((score, latest, len(items)))
+    ranked.sort(key=lambda item: (-item[0], str(item[1]["description"])))
+    return [
+        {
+            "description": latest["description"],
+            "merchant": latest["merchant"],
+            "amount_cents": int(latest["amount_cents"]),
+            "category": latest["category"],
+            "account": latest["account"],
+            "payment_method": latest["payment_method"],
+            "count": count,
+            "last": latest["day"],
+        }
+        for _, latest, count in ranked[:limit]
+    ]
+
+
+def largest_purchases(
+    rows: list[dict[str, Any]], start: date, end: date, limit: int = 6
+) -> list[dict[str, Any]]:
+    """The largest purchases from ``start`` through ``end``, bills left out.
+
+    ``rows`` are classified spending. Refunds are not purchases. The more recent
+    of two equal amounts comes first.
+    """
+    found = [
+        row
+        for row in rows
+        if row["transaction_type"] == "expense"
+        and row["spending_treatment"] != "Commitments"
+        and start.isoformat() <= str(row["transaction_date"])[:10] <= end.isoformat()
+    ]
+    found.sort(key=lambda row: str(row["transaction_date"])[:10], reverse=True)
+    found.sort(key=lambda row: -int(row["amount_cents"]))
+    return found[:limit]

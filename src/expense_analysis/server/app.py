@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Awaitable, Callable
+from dataclasses import asdict, replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -23,14 +24,21 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ..categories import delete_keyword_rules, effective_config, save_category, suggested_category
-from ..choices import delete_choice, restore_choice, save_choice
+from ..autopilot import settle
+from ..categories import (
+    category_history,
+    delete_keyword_rules,
+    effective_config,
+    save_category,
+    suggest_category,
+)
+from ..choices import delete_choice, restore_choice, save_choice, save_entry_default
 from ..config import PROJECT_ROOT, AppConfig, load_config
 from ..database import Database, DuplicateTransactionError
 from ..import_export import SIGN_CONVENTIONS, CsvDecodeError, export_csv, preview_csv
-from ..models import TransactionDraft, parse_date, validate_transaction_date
-from ..spending_treatment import apply_transaction_treatment
-from ..term_budget import Bill, BudgetSettings
+from ..models import TransactionDraft, name_tokens, parse_date, validate_transaction_date
+from ..spending_treatment import apply_transaction_treatment, classify_spending
+from ..term_budget import Bill
 from ..transaction_edits import TransactionChange, apply_changes
 from . import views
 
@@ -79,7 +87,15 @@ class DraftIn(BaseModel):
 
 class CreateIn(DraftIn):
     category_manual: bool = False
+    # Picked for this entry, rather than carried over from the one it repeats.
+    category_chosen: bool = False
     allow_duplicate: bool = False
+
+
+class SuggestIn(BaseModel):
+    description: str = ""
+    merchant: str = ""
+    transaction_type: str = "expense"
 
 
 class EditIn(BaseModel):
@@ -111,7 +127,10 @@ class TreatmentIn(BaseModel):
 
 
 class CategoryTreatmentsIn(BaseModel):
+    # Only the student's choices; every other category stays automatic.
     categories: dict[str, str]
+    # Omitted leaves the saved cost-of-attendance parts alone.
+    parts: dict[str, str] | None = None
 
 
 class ChoiceSaveIn(BaseModel):
@@ -131,6 +150,10 @@ class ChoiceRestoreIn(BaseModel):
     spending_class: str | None = None
 
 
+class EntryDefaultIn(BaseModel):
+    value: str
+
+
 class KeywordRuleIn(BaseModel):
     keyword: str
     category: str
@@ -147,12 +170,22 @@ class BillIn(BaseModel):
     cadence: str = "Monthly"
     due_day: int = 1
     due: str | None = None
+    pinned: bool = True
+    # Words that name the purchase, when the category holds other things too.
+    match: list[str] = []
 
 
 class BudgetSettingsIn(BaseModel):
-    housing: str = "Off-campus"
+    """What the student settles by hand. Anything left out is automatic."""
+
+    housing: str | None = None
+    cohort: str | None = None
+    residency: bool | None = None
+    insurance: bool | None = None
     weekly_cents: int | None = None
+    total_cents: int | None = None
     bills: list[BillIn] = []
+    dismissed: list[str] = []
 
 
 def _host_name(host: str) -> str:
@@ -236,9 +269,9 @@ def create_app(
             accounts=params.getlist("account"),
             search=q,
         )
-        from ..spending_treatment import classify_spending
-
-        classified = classify_spending(rows, db.get_budget_settings(), db.get_spending_rules())
+        # Learned from the whole ledger, whichever rows are asked for.
+        auto = views.learned_budget(db, config(), db.list_transactions(), today()).auto
+        classified = classify_spending(rows, auto.settings, auto.rules)
         return {
             "rows": [views.serialize_row(row) for row in classified],
             "total": db.count_transactions(),
@@ -248,11 +281,28 @@ def create_app(
     def create_transaction(body: CreateIn) -> dict[str, Any]:
         settings = config()
         draft = body.draft()
+        suggestion = suggest_category(
+            db, settings, body.description, body.merchant, body.transaction_type, today()
+        )
         if not body.category_manual or not body.category.strip():
-            category = suggested_category(db, settings, body.description, body.merchant)
-            draft = TransactionDraft(**{**draft.__dict__, "category": category}).validated()
-        transaction_id = db.add_transaction(draft, allow_duplicate=body.allow_duplicate)
+            draft = replace(draft, category=suggestion.category).validated()
+        transaction_id = db.add_transaction(
+            draft,
+            allow_duplicate=body.allow_duplicate,
+            # Picking something else says the suggestion was wrong.
+            corrected=body.category_chosen
+            and suggestion.source not in ("default", "none")
+            and draft.category != suggestion.category,
+        )
         return row_out(transaction_id)
+
+    @api.post("/suggest")
+    def suggest(body: SuggestIn) -> dict[str, Any]:
+        return asdict(
+            suggest_category(
+                db, config(), body.description, body.merchant, body.transaction_type, today()
+            )
+        )
 
     @api.post("/transactions/edit")
     def edit_transaction(body: EditIn) -> dict[str, Any]:
@@ -310,9 +360,18 @@ def create_app(
 
     @api.put("/budget/settings")
     def save_budget_settings(body: BudgetSettingsIn) -> dict[str, Any]:
-        settings = BudgetSettings(
-            housing=body.housing,
+        auto = views.learned_budget(db, config(), db.list_transactions(), today()).auto
+        settings = settle(
+            db.get_budget_settings(),
+            auto,
+            choices={
+                "housing": body.housing,
+                "cohort": body.cohort,
+                "residency": body.residency,
+                "insurance": body.insurance,
+            },
             weekly_cents=body.weekly_cents or None,
+            total_cents=body.total_cents or None,
             bills=tuple(
                 Bill(
                     name=item.name.strip(),
@@ -321,10 +380,13 @@ def create_app(
                     cadence=item.cadence,
                     due_day=item.due_day,
                     due=date.fromisoformat(item.due) if item.due else None,
+                    pinned=item.pinned,
+                    match=frozenset().union(*(name_tokens(word) for word in item.match)),
                 )
                 for item in body.bills
             ),
-        ).validate()
+            dismissed=body.dismissed,
+        )
         db.save_budget_settings(settings)
         return {"saved": True}
 
@@ -332,6 +394,9 @@ def create_app(
     def save_category_treatments(body: CategoryTreatmentsIn) -> dict[str, Any]:
         rules = db.get_spending_rules()
         rules["categories"] = dict(body.categories)
+        rules["auto"] = True
+        if body.parts is not None:
+            rules["parts"] = dict(body.parts)
         db.save_spending_rules(rules)
         return {"saved": len(body.categories)}
 
@@ -387,6 +452,10 @@ def create_app(
         restore_choice(db, kind, body.name, body.spending_class)
         return {"restored": body.name}
 
+    @api.put("/defaults/{kind}")
+    def set_default(kind: str, body: EntryDefaultIn) -> dict[str, Any]:
+        return {"previous": save_entry_default(db, config(), kind, body.value)}
+
     @api.post("/keyword-rules")
     def add_keyword_rule(body: KeywordRuleIn) -> dict[str, Any]:
         settings = config()
@@ -425,14 +494,12 @@ def create_app(
         settings = config()
         try:
             unknown = views.unknown_import_categories(content, settings)
-            from ..categories import suggestion_data
-
             preview = preview_csv(
                 content,
                 settings,
                 db.existing_fingerprints(),
                 category_mapping,
-                suggestion_data(db, settings)["merchants"],
+                category_history(db, settings, today()).category_for,
                 sign_convention=sign,
             )
         except CsvDecodeError as error:

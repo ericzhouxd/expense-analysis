@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { money, parseCents, percent } from "./format";
+import { money, parseCents } from "./format";
 import { keywordMatches } from "./keyword";
 import { parseQuickEntry, type Vocabulary } from "./quickParse";
 
@@ -9,43 +9,31 @@ const vocabulary: Vocabulary = {
   categories: ["Food", "Dining Out", "Transportation", "Daily Necessities", "Entertainment", "Rent"],
   accounts: ["Checking", "Credit Card", "Cash"],
   paymentMethods: ["Apple Pay", "Card", "Bank Transfer", "Online", "Cash"],
-  rules: [
-    ["coffee", "Dining Out"],
-    ["uber", "Transportation"],
-    ["uber eats", "Dining Out"],
-    ["grocer", "Food"],
-    ["rent", "Rent"],
-  ],
-  merchants: { chipotle: "Dining Out", ralphs: "Food" },
   merchantNames: { chipotle: "Chipotle", ralphs: "Ralphs", "trader joe's": "Trader Joe's" },
 };
 
 describe("parseQuickEntry", () => {
-  it("reads amount, relative date, merchant and category", () => {
+  it("reads amount, relative date and merchant, and leaves the category to the server", () => {
     const draft = parseQuickEntry("12.50 chipotle lunch yesterday", vocabulary);
     expect(draft.amountCents).toBe(1250);
     expect(draft.date).toBe("2026-11-08");
     expect(draft.merchant).toBe("Chipotle");
-    expect(draft.category).toBe("Dining Out");
-    expect(draft.categorySource).toBe("merchant");
+    expect(draft.category).toBeNull();
     expect(draft.description).toBe("Chipotle lunch");
   });
 
-  it("prefers the longest rule and reads weekdays and payment methods", () => {
+  it("reads weekdays and payment methods", () => {
     const draft = parseQuickEntry("uber eats 23 fri apple pay", vocabulary);
     expect(draft.amountCents).toBe(2300);
     expect(draft.date).toBe("2026-11-06");
-    expect(draft.category).toBe("Dining Out");
     expect(draft.paymentMethod).toBe("Apple Pay");
     expect(draft.description).toBe("Uber eats");
   });
 
-  it("marks refunds and keeps word-edge rules", () => {
+  it("marks refunds", () => {
     const refund = parseQuickEntry("refund 16.40 target", vocabulary);
     expect(refund.type).toBe("refund");
     expect(refund.amountCents).toBe(1640);
-    expect(parseQuickEntry("parent gift 20", vocabulary).category).toBeNull();
-    expect(parseQuickEntry("groceries 40", vocabulary).category).toBe("Food");
   });
 
   it("understands calendar dates without jumping into the future", () => {
@@ -62,7 +50,6 @@ describe("parseQuickEntry", () => {
     const draft = parseQuickEntry("$1,200.5 #ent concert from credit card note: with Sam", vocabulary);
     expect(draft.amountCents).toBe(120050);
     expect(draft.category).toBe("Entertainment");
-    expect(draft.categorySource).toBe("tag");
     expect(draft.account).toBe("Credit Card");
     expect(draft.notes).toBe("with Sam");
     expect(draft.description).toBe("Concert");
@@ -94,8 +81,6 @@ describe("format", () => {
     expect(money(123450)).toBe("$1,234.50");
     expect(money(-500)).toBe("−$5.00");
     expect(money(500, { signed: true })).toBe("+$5.00");
-    expect(percent(13.94)).toBe("+13.9%");
-    expect(percent(null)).toBe("—");
   });
 
   it("parses typed dollars into cents", () => {

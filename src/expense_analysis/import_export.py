@@ -3,11 +3,12 @@ from __future__ import annotations
 import codecs
 import csv
 import io
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from .config import AppConfig
-from .models import TransactionDraft, normalize_text, parse_amount_cents, parse_date
+from .models import TransactionDraft, parse_amount_cents, parse_date
 
 
 class CsvDecodeError(ValueError):
@@ -111,13 +112,15 @@ def preview_csv(
     config: AppConfig,
     existing_fingerprints: set[str] | None = None,
     category_mapping: dict[str, str] | None = None,
-    merchant_suggestions: dict[str, str] | None = None,
+    suggest: Callable[[str, str, str], str | None] | None = None,
     sign_convention: str = "positive_expense",
 ) -> ImportPreview:
     """Validate every row without saving.
 
     ``sign_convention`` sets the type of rows without a Type column: by default a
     negative amount is a refund; bank exports often sign purchases negative instead.
+    ``suggest`` gives a category, from description, merchant and type, to a row that
+    neither the file nor a rule gives one.
     """
     positive_type, negative_type = SIGN_CONVENTIONS[sign_convention]
     text = decode_csv(content)
@@ -163,9 +166,9 @@ def preview_csv(
         merchant = _value(normalized, "merchant")
         mapped = (category_mapping or {}).get(original_category)
         category = mapped or config.category_for(description, merchant, original_category)
-        if category == "Uncategorized" and merchant:
-            # Reuse learned merchant history so imports agree with the manual entry form.
-            suggestion = (merchant_suggestions or {}).get(normalize_text(merchant))
+        if category == "Uncategorized" and suggest is not None:
+            # Learned the same way as for quick add, so the two agree.
+            suggestion = suggest(description, merchant, transaction_type)
             if suggestion and suggestion in config.categories:
                 category = suggestion
         if original_category and category == "Uncategorized":

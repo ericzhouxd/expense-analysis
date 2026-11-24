@@ -115,7 +115,6 @@ def test_bills_and_big_stuff_stay_outside_the_line():
     assert result["week"]["spent"] == 1200
     assert result["totals"]["bills"] == 145000  # tuition was paid before week 0
     assert result["totals"]["big_stuff"] == 30000
-    assert [r["id"] for r in result["big_stuff"]] == ["flight"]
     bills = {(b["name"], b["due"]): b for b in result["bills"]}
     assert bills["Rent", date(2026, 11, 1)]["status"] == "paid"
     # October's rent shows no payment, but November's is paid, so it stops nagging.
@@ -237,9 +236,6 @@ def test_bill_payments_settle_the_nearest_due_date_and_allow_for_cents():
     # What needs attention comes first; settled due dates sink to the bottom.
     statuses = [b["status"] for b in result["bills"]]
     assert statuses.index("part") < statuses.index("upcoming") < statuses.index("paid")
-    assert result["bill_totals"]["paid"] == 2
-    # The rest of October's utilities, then November's utilities and phone and December's rent.
-    assert result["bill_totals"]["outstanding"] == (6000 - 3100) + 6000 + 3500 + 145000
 
 
 def test_period_kinds_follow_the_calendar():

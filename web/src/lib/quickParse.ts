@@ -4,7 +4,7 @@
  */
 
 import { addDays, iso, parseIso } from "./format";
-import { keywordMatches, normalizeText } from "./keyword";
+import { keywordMatches } from "./keyword";
 
 export type TransactionType = "expense" | "refund" | "income" | "transfer";
 
@@ -13,8 +13,6 @@ export interface Vocabulary {
   categories: string[];
   accounts: string[];
   paymentMethods: string[];
-  rules: [string, string][];
-  merchants: Record<string, string>;
   merchantNames: Record<string, string>;
 }
 
@@ -42,8 +40,6 @@ export interface ParsedDraft {
   description: string;
   merchant: string;
   category: string | null;
-  categorySource: "tag" | "rule" | "merchant" | null;
-  categoryReason: string;
   paymentMethod: string | null;
   account: string | null;
   notes: string;
@@ -234,21 +230,6 @@ function categoryFromTag(tag: string, categories: string[]): string | null {
   );
 }
 
-export function suggestCategory(
-  description: string,
-  merchant: string,
-  vocabulary: Pick<Vocabulary, "rules" | "merchants">,
-): { category: string; keyword: string; source: "rule" | "merchant" } | null {
-  const rules = [...vocabulary.rules].sort((a, b) => b[0].length - a[0].length);
-  for (const text of [description, merchant]) {
-    for (const [keyword, category] of rules) {
-      if (keywordMatches(keyword, text)) return { category, keyword, source: "rule" };
-    }
-  }
-  const known = vocabulary.merchants[normalizeText(merchant)];
-  return known ? { category: known, keyword: merchant, source: "merchant" } : null;
-}
-
 function findMerchant(text: string, names: Record<string, string>): string {
   const keys = Object.keys(names).sort((a, b) => b.length - a.length);
   const hit = keys.find((key) => key && keywordMatches(key, text));
@@ -274,8 +255,6 @@ export function parseQuickEntry(input: string, vocabulary: Vocabulary): ParsedDr
     description: "",
     merchant: "",
     category: null,
-    categorySource: null,
-    categoryReason: "",
     paymentMethod: null,
     account: null,
     notes,
@@ -290,8 +269,6 @@ export function parseQuickEntry(input: string, vocabulary: Vocabulary): ParsedDr
       const category = categoryFromTag(raw.slice(1), vocabulary.categories);
       if (category) {
         result.category = category;
-        result.categorySource = "tag";
-        result.categoryReason = `tagged ${raw}`;
         result.tokens.push({ text: raw, role: "category" });
         continue;
       }
@@ -362,17 +339,6 @@ export function parseQuickEntry(input: string, vocabulary: Vocabulary): ParsedDr
   const description = text.join(" ").trim();
   result.description = description ? description.charAt(0).toUpperCase() + description.slice(1) : "";
   result.merchant = findMerchant(description, vocabulary.merchantNames);
-  if (!result.category) {
-    const suggestion = suggestCategory(description, result.merchant, vocabulary);
-    if (suggestion && vocabulary.categories.includes(suggestion.category)) {
-      result.category = suggestion.category;
-      result.categorySource = suggestion.source;
-      result.categoryReason =
-        suggestion.source === "rule"
-          ? `matched “${suggestion.keyword}”`
-          : `usual for ${result.merchant}`;
-    }
-  }
   return result;
 }
 

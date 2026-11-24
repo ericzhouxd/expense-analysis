@@ -1,11 +1,10 @@
-import { useEffect, useId, useRef } from "react";
+import { type ReactNode, useEffect, useId, useRef } from "react";
 
-import type { BillDue, BillTotals, Comparison, Week } from "../api";
-import { linkTo } from "../App";
-import { compactMoney, money, rangeLabel, shortDate, versus } from "../lib/format";
-import { hot, rgba } from "../lib/glyphs";
-import { usePreview } from "./charts";
-import { Led } from "./instrument";
+import type { Budget, Comparison, Week } from "../api";
+import { compactMoney, money, plural, rangeLabel, wholeMoney } from "../lib/format";
+import { LED, rgba } from "../lib/glyphs";
+import { DotPattern, Glass, PanelDefs, type Reading, ReadoutBar, usePreview, useWidth, Well } from "./charts";
+import { Delta, HeroNumber, Lamps, PaceMeter, Pips, Readout } from "./instrument";
 
 /** Storage keeps the original treatment names; people see these. */
 export const TREATMENT_LABEL: Record<string, string> = {
@@ -18,109 +17,117 @@ export function treatmentLabel(value: string): string {
   return TREATMENT_LABEL[value] ?? value;
 }
 
-const BILL_COLORS: Record<BillDue["status"], string> = {
-  paid: "#9FD39B",
-  part: "#F2C14E",
-  late: "#FF8A70",
-  soon: "#F2C14E",
-  upcoming: "#59614F",
-  missed: "#59614F",
-};
-
-const BILL_TEXT: Record<BillDue["status"], string> = {
-  paid: "paid",
-  part: "partly paid",
-  late: "no payment yet",
-  soon: "due this week",
-  upcoming: "upcoming",
-  missed: "no payment recorded",
-};
-
-/** "2 of 5 paid · $1,450.00 to go", for the corner of a bills card. */
-export function billsSummary(totals: BillTotals): string | undefined {
-  if (!totals.count) return undefined;
-  return `${totals.paid} of ${totals.count} paid${totals.outstanding ? ` · ${money(totals.outstanding)} to go` : ""}`;
+/** Against an earlier stretch; blank when there is none. */
+export function Versus({ comparison }: { comparison: Comparison | null }) {
+  if (!comparison || comparison.change === null) return null;
+  return (
+    <Delta
+      change={comparison.change}
+      percent={comparison.percent}
+      than={rangeLabel(comparison.prior_start, comparison.prior_end)}
+    />
+  );
 }
 
-/**
- * Due dates in the order the server sends them (what needs attention first),
- * then repeating charges expected soon. Each row opens the transactions behind it.
- */
-export function BillList({
-  bills,
-  upcoming = [],
+/** One of the panel's leading numbers: what was spent, and how that compares. */
+export function Spent({
+  label,
+  cents,
+  tone = "accent",
+  live = false,
+  whole = false,
+  comparison,
 }: {
-  bills: BillDue[];
-  upcoming?: { name: string; amount: number; due: string; frequency: string }[];
+  label: string;
+  cents: number;
+  tone?: "accent" | "over" | "amber" | "plain";
+  /** An estimate, where cents would claim too much. */
+  whole?: boolean;
+  /** Still counting. */
+  live?: boolean;
+  comparison: ReactNode;
 }) {
   return (
-    <div>
-      {bills.map((bill) => {
-        const search = new URLSearchParams({ start: bill.window_start, end: bill.window_end });
-        if (bill.categories.length === 1) search.set("category", bill.categories[0] ?? "");
-        const settled = bill.status === "paid" || bill.status === "part";
-        return (
-          <a
-            key={`${bill.name}${bill.due}`}
-            className="bill-row pick"
-            title={`See what was paid toward ${bill.name}`}
-            {...linkTo(`/transactions?${search}`)}
-          >
-            <Led
-              color={BILL_COLORS[bill.status]}
-              lit={bill.status !== "upcoming" && bill.status !== "missed"}
-              pulse={bill.status === "soon"}
-            />
-            <span className="stack tight" style={{ gap: 2 }}>
-              <span>{bill.name}</span>
-              <span className="tiny dim caps">
-                {BILL_TEXT[bill.status]} · due {shortDate(bill.due)}
-                {bill.categories.length ? "" : " · no category, so payments can't be matched"}
-              </span>
-            </span>
-            <span className="num small" style={{ textAlign: "right" }}>
-              {settled ? (
-                <>
-                  {money(bill.paid)}
-                  {bill.paid !== bill.amount ? <span className="dim"> / {money(bill.amount)}</span> : null}
-                </>
-              ) : (
-                money(bill.amount)
-              )}
-            </span>
-          </a>
-        );
-      })}
-      {upcoming.map((item) => (
-        <a
-          key={`${item.name}${item.due}`}
-          className="bill-row pick"
-          title={`See earlier ${item.name} charges`}
-          {...linkTo(`/transactions?q=${encodeURIComponent(item.name)}`)}
-        >
-          <Led color="#7CB8FF" lit />
-          <span className="stack tight" style={{ gap: 2 }}>
-            <span>{item.name}</span>
-            <span className="tiny dim caps">
-              expected {shortDate(item.due)} · repeats {item.frequency.toLowerCase()}
-            </span>
-          </span>
-          <span className="num small dim" style={{ textAlign: "right" }}>
-            ~{money(item.amount)}
-          </span>
-        </a>
-      ))}
+    <div className="spent">
+      <span className="led-label">
+        <span className={`led-dot ${live ? "pulse" : ""}`} aria-hidden="true" />
+        {label}
+      </span>
+      <HeroNumber value={whole ? wholeMoney(cents) : money(cents)} tone={tone} />
+      <div className="small">{comparison}</div>
     </div>
   );
 }
 
-/** A comparison with an earlier stretch, worded and colored the same way everywhere. */
-export function Versus({ comparison }: { comparison: Comparison | null }) {
-  if (!comparison || comparison.change === null) return <span className="dim">nothing earlier to compare with</span>;
+interface LineWeek {
+  spent: number;
+  line: number;
+  pace: number;
+  left: number;
+  per_day: number;
+  days_left: number;
+}
+
+/** What the weekly line leaves, and what that is a day. */
+export function LeftThisWeek({ week }: { week: LineWeek }) {
+  const over = week.left < 0;
   return (
-    <span className={comparison.change > 0 ? "up" : "ok"}>
-      {versus(comparison.change, rangeLabel(comparison.prior_start, comparison.prior_end), comparison.percent)}
-    </span>
+    <>
+      <Readout label={over ? "Over line" : "Left"} value={money(Math.abs(week.left))} tone={over ? "coral" : "sage"} />
+      <Readout label="Per day" value={money(week.per_day)} tone={over ? "coral" : "sage"} />
+    </>
+  );
+}
+
+/** What a term's finished weeks came to against the line, with an LED for each. */
+export function SavedThisTerm({ weeks }: { weeks: number[] }) {
+  if (!weeks.length) return null;
+  const saved = weeks.reduce((sum, week) => sum + week, 0);
+  const good = weeks.filter((week) => week >= 0).length;
+  return (
+    <Readout
+      label={saved >= 0 ? "Term saved" : "Term over"}
+      // Cents would push the pips out of the window.
+      value={Math.abs(saved) < 1000_00 ? money(Math.abs(saved)) : wholeMoney(Math.abs(saved))}
+      tone={saved >= 0 ? "sage" : "coral"}
+      sub={
+        <Pips
+          label={`${good} of ${plural(weeks.length, "finished week")} inside the line`}
+          pips={weeks.map((week) => (week >= 0 ? "ok" : "up"))}
+        />
+      }
+    />
+  );
+}
+
+/** Where the weekly line comes from. */
+export function LineSource({ source }: { source: Budget["line"]["source"] }) {
+  return (
+    <Lamps
+      label="Weekly line from"
+      value={source}
+      tone={source === "own" ? "blue" : "amber"}
+      options={[
+        { value: "school", label: "UCLA" },
+        { value: "coa", label: "Auto" },
+        { value: "own", label: "Own" },
+      ]}
+    />
+  );
+}
+
+/** Spending against the weekly line. Each day owns a seventh of it, so the scale is the week. */
+export function WeekMeter({ week, cap = false }: { week: LineWeek; cap?: boolean }) {
+  return (
+    <PaceMeter
+      value={week.spent}
+      capacity={week.line}
+      pace={week.pace}
+      segments={28}
+      label={`${money(week.spent)} of ${money(week.line)} this week`}
+      cap={cap ? money(week.line) : undefined}
+      today={7 - week.days_left}
+    />
   );
 }
 
@@ -133,246 +140,181 @@ function shortWeek(label: string): string {
   return label.replace("Week of ", "").toUpperCase();
 }
 
-const ACCENT = "#D4F53C";
-const CORAL = "#FF8A70";
-
 /**
- * One LED column per week. The dashed amber line is the weekly line; a week's
- * column lights green up to the line and coral above it. Under each finished week
- * is what it saved (or went over), which never carries into the next week.
+ * One LED column per week against the dotted amber line that week had: lime up
+ * to the line and coral above it. Under each finished week is what it saved (or
+ * went over), which never carries into the next week.
  */
 export function WeekBars({
   weeks,
-  line,
   school,
   onPick,
 }: {
   weeks: Week[];
-  line: number;
+  /** The school's own weekly estimate, when it isn't the line. */
   school?: number;
   /** Called with a week that has started when it is clicked. */
-  onPick?: (week: Week) => void;
+  onPick: (week: Week) => void;
 }) {
   const id = useId().replace(/:/g, "");
+  const [box, room] = useWidth(720);
   const { active, bind, leave } = usePreview();
   const scroller = useRef<HTMLDivElement>(null);
   const currentIndex = weeks.findIndex((week) => week.state === "current");
+  const width = Math.max(room, weeks.length * 46);
   useEffect(() => {
     // On a phone the chart scrolls sideways; start with this week in view.
     const element = scroller.current;
     if (!element || currentIndex < 0 || element.scrollWidth <= element.clientWidth) return;
     const right = (element.scrollWidth * (currentIndex + 1.5)) / weeks.length;
     element.scrollLeft = Math.max(0, right - element.clientWidth);
-  }, [currentIndex, weeks.length]);
+  }, [currentIndex, weeks.length, width]);
   if (!weeks.length) return null;
-  const width = 720;
-  const height = 250;
-  const top = 26;
-  const base = 186;
-  const largest = Math.max(1, line * 1.4, ...weeks.map((week) => week.spent), school ?? 0);
+
+  // Multiples of the 6-unit dot grid, so no dot is cut.
+  const top = 24;
+  const base = 198;
+  const height = base + 46;
+  const line = weeks[currentIndex]?.line ?? weeks[weeks.length - 1]?.line ?? 0;
+  const largest = Math.max(1, ...weeks.map((week) => Math.max(week.spent, week.line * 1.25)), school ?? 0);
   const column = width / weeks.length;
-  const barWidth = Math.min(40, column * 0.6);
-  const y = (value: number) => base - Math.round(((base - top) * Math.max(0, value)) / largest / 6) * 6;
-  const lineY = y(line);
-  const schoolY = school && school !== line ? y(school) : null;
+  const barWidth = Math.max(18, Math.floor(Math.min(54, column * 0.6) / 6) * 6);
+  const rise = (value: number) => Math.round(((base - top) * Math.max(0, value)) / largest / 6) * 6;
+  const y = (value: number) => base - rise(value);
   const described = weeks.find((week) => week.start === active) ?? weeks[currentIndex] ?? weeks[weeks.length - 1];
 
-  function describe(week: Week): { text: string; tone?: "up" | "ok" }[] {
-    const title = { text: `${week.label} · ${rangeLabel(week.start, week.end)}` };
-    if (week.state === "future") return [title, { text: `ahead · ${money(week.line)} to spend` }];
-    const spent = { text: `${money(week.spent)} spent` };
-    if (week.saved !== null) {
-      return [
-        title,
-        spent,
-        week.saved >= 0
-          ? { text: `${money(week.saved)} saved`, tone: "ok" }
-          : { text: `${money(-week.saved)} over the line`, tone: "up" },
-      ];
-    }
+  function describe(week: Week): Reading[] {
+    const title = {
+      text: `${week.label.startsWith("Week of") ? "" : `${week.label} · `}${rangeLabel(week.start, week.end)}`,
+    };
+    if (week.state === "future") return [title, { text: money(week.line) }];
+    const kept = week.saved ?? week.left;
     return [
       title,
-      spent,
-      week.left >= 0
-        ? { text: `${money(week.left)} left this week`, tone: "ok" }
-        : { text: `${money(-week.left)} over the line`, tone: "up" },
+      { text: `${money(week.spent)} / ${money(week.line)}` },
+      { text: money(kept, { signed: true }), tone: kept >= 0 ? "ok" : "up" },
     ];
   }
 
-  function pattern(name: string, color: string, shine: number) {
-    return (
-      <>
-        <radialGradient id={`${id}${name}g`} cx="38%" cy="34%" r="70%">
-          <stop offset="0" stopColor={hot(color, shine)} />
-          <stop offset="0.45" stopColor={color} />
-          <stop offset="1" stopColor={rgba(color, 0.55)} />
-        </radialGradient>
-        <pattern id={`${id}${name}`} width="6" height="6" patternUnits="userSpaceOnUse">
-          <circle cx="3" cy="3.5" r="2.2" fill="rgba(0,0,0,.7)" />
-          <circle cx="3" cy="3" r="2.2" fill={`url(#${id}${name}g)`} />
-        </pattern>
-      </>
-    );
-  }
+  const steps = weeks
+    .map((week, index) => `${index ? "L" : "M"}${index * column} ${y(week.line)}H${(index + 1) * column}`)
+    .join("");
 
   return (
-    <div className="stack tight">
+    <div className="stack" ref={box}>
       <div className="chart-scroll" ref={scroller}>
         <svg
           className="chart"
+          width={width}
+          height={height}
           viewBox={`0 0 ${width} ${height}`}
           role="group"
           aria-label="Spending by week against the weekly line"
           onPointerLeave={leave}
         >
           <defs>
-            {pattern("on", ACCENT, 0.75)}
-            {pattern("past", "#7f972a", 0.35)}
-            {pattern("over", CORAL, 0.6)}
-            <pattern id={`${id}off`} width="6" height="6" patternUnits="userSpaceOnUse">
-              <circle cx="3" cy="3.4" r="1.5" fill="#20261b" />
-              <circle cx="3" cy="3" r="1.3" fill="#0b0d09" />
-            </pattern>
-            <linearGradient id={`${id}well`} x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0" stopColor="#030402" />
-              <stop offset="1" stopColor="#0b0d09" />
-            </linearGradient>
-            <linearGradient id={`${id}sheen`} gradientUnits="userSpaceOnUse" x1="0" x2="0" y1={top} y2={base}>
-              <stop offset="0" stopColor="#fff" stopOpacity="0.06" />
-              <stop offset="0.45" stopColor="#fff" stopOpacity="0" />
-            </linearGradient>
+            <PanelDefs id={id} top={top} bottom={base} />
+            <DotPattern id={`${id}on`} color={LED.accent} />
+            <DotPattern id={`${id}past`} color="#7f972a" shine={0.35} />
+            <DotPattern id={`${id}over`} color={LED.coral} shine={0.6} />
           </defs>
           <g>
-          {weeks.map((week, index) => {
-            const x = Math.round((index + 0.5) * column - barWidth / 2);
-            const current = week.state === "current";
-            const spentY = y(week.spent);
-            const under = Math.max(spentY, lineY);
-            const pick = onPick && week.state !== "future" ? () => onPick(week) : null;
-            return (
-              <g
-                key={week.start}
-                className={`column ${pick ? "pick" : ""}`}
-                role={pick ? "button" : "img"}
-                tabIndex={week.start === described?.start ? 0 : -1}
-                aria-label={describe(week)
-                  .map((part) => part.text)
-                  .join(", ")}
-                opacity={week.state === "future" ? 0.55 : 1}
-                {...bind(week.start, pick)}
-              >
-                <rect x={index * column} y="0" width={column} height={height} fill="transparent" />
-                <rect x={x - 3} y={top - 3} width={barWidth + 6} height={base - top + 6} fill={`url(#${id}well)`} />
-                {week.start === active ? (
-                  <rect
-                    x={x - 3.5}
-                    y={top - 3.5}
-                    width={barWidth + 7}
-                    height={base - top + 7}
-                    fill="none"
-                    stroke="#E9ECE3"
-                    strokeOpacity="0.4"
-                  />
-                ) : null}
-                <rect x={x - 3} y={top - 3} width={barWidth + 6} height="2" fill="#000" opacity="0.7" />
-                <rect x={x - 3} y={base + 2} width={barWidth + 6} height="1" fill="#fff" opacity="0.06" />
-                <rect x={x} y={top} width={barWidth} height={base - top} fill={`url(#${id}off)`} />
-                {week.spent > 0 ? (
-                  <>
-                    <rect
-                      x={x}
-                      y={under}
-                      width={barWidth}
-                      height={base - under}
-                      fill={`url(#${id}${current ? "on" : "past"})`}
-                      style={current ? { filter: `drop-shadow(0 0 4px ${rgba(ACCENT, 0.7)})` } : undefined}
-                    />
-                    {spentY < lineY ? (
-                      <rect
-                        x={x}
-                        y={spentY}
-                        width={barWidth}
-                        height={lineY - spentY}
-                        fill={`url(#${id}over)`}
-                        style={{ filter: `drop-shadow(0 0 4px ${rgba(CORAL, 0.6)})` }}
-                      />
-                    ) : null}
-                  </>
-                ) : null}
-                <text
-                  x={x + barWidth / 2}
-                  y={base + 22}
-                  textAnchor="middle"
-                  style={current ? { fill: ACCENT } : undefined}
+            {weeks.map((week, index) => {
+              const origin = Math.round((index + 0.5) * column - barWidth / 2);
+              const current = week.state === "current";
+              const lit = week.start === active;
+              const spent = rise(week.spent);
+              const under = Math.min(spent, rise(week.line));
+              const pick = week.state === "future" ? null : () => onPick(week);
+              return (
+                <g
+                  key={week.start}
+                  className={`column ${pick ? "pick" : ""}`}
+                  role={pick ? "button" : "img"}
+                  tabIndex={week.start === described?.start ? 0 : -1}
+                  aria-label={describe(week)
+                    .map((part) => part.text)
+                    .join(", ")}
+                  opacity={week.state === "future" ? 0.55 : 1}
+                  transform={`translate(${origin} 0)`}
+                  {...bind(week.start, pick)}
                 >
-                  {shortWeek(week.label)}
-                </text>
-                {week.saved !== null ? (
+                  <rect x={index * column - origin} y="0" width={column} height={height} fill="transparent" />
+                  <Well id={id} x={0} y={top} width={barWidth} height={base - top} lit={lit} />
+                  {spent ? (
+                    <rect
+                      x="0"
+                      y={base - under}
+                      width={barWidth}
+                      height={under}
+                      fill={`url(#${id}${current || lit ? "on" : "past"})`}
+                      style={current ? { filter: `drop-shadow(0 0 4px ${rgba(LED.accent, 0.7)})` } : undefined}
+                    />
+                  ) : null}
+                  {spent > under ? (
+                    <rect
+                      x="0"
+                      y={base - spent}
+                      width={barWidth}
+                      height={spent - under}
+                      fill={`url(#${id}over)`}
+                      style={{ filter: `drop-shadow(0 0 4px ${rgba(LED.coral, 0.6)})` }}
+                    />
+                  ) : null}
+                  <Glass id={id} x={0} y={top} width={barWidth} height={base - top} />
                   <text
-                    x={x + barWidth / 2}
-                    y={base + 40}
+                    x={barWidth / 2}
+                    y={base + 20}
                     textAnchor="middle"
-                    style={{ fill: week.saved >= 0 ? "#9FD39B" : CORAL, fontSize: 10 }}
+                    style={current ? { fill: LED.accent } : lit ? { fill: "#E9ECE3" } : undefined}
                   >
-                    {week.saved >= 0 ? "+" : "−"}
-                    {compactMoney(Math.abs(week.saved))}
+                    {shortWeek(week.label)}
                   </text>
-                ) : current ? (
-                  <text x={x + barWidth / 2} y={base + 40} textAnchor="middle" style={{ fill: ACCENT, fontSize: 10 }}>
-                    NOW
-                  </text>
-                ) : null}
-              </g>
-            );
-          })}
+                  {week.saved !== null ? (
+                    <text
+                      x={barWidth / 2}
+                      y={base + 38}
+                      textAnchor="middle"
+                      style={{ fill: week.saved >= 0 ? LED.sage : LED.coral }}
+                    >
+                      {week.saved >= 0 ? "+" : "−"}
+                      {compactMoney(Math.abs(week.saved))}
+                    </text>
+                  ) : current ? (
+                    <text x={barWidth / 2} y={base + 38} textAnchor="middle" style={{ fill: LED.accent }}>
+                      NOW
+                    </text>
+                  ) : null}
+                </g>
+              );
+            })}
           </g>
           <g pointerEvents="none">
-            <rect x="0" y={top - 3} width={width} height={base - top + 6} fill={`url(#${id}sheen)`} />
-            {schoolY !== null ? (
-              <line x1="0" x2={width} y1={schoolY} y2={schoolY} stroke="#7CB8FF" strokeWidth="1.5" strokeDasharray="1 5" strokeLinecap="round" />
+            {school ? (
+              <>
+                <line
+                  x1="0"
+                  x2={width}
+                  y1={y(school)}
+                  y2={y(school)}
+                  stroke={LED.blue}
+                  strokeWidth="1.5"
+                  strokeDasharray="1 5"
+                  strokeLinecap="round"
+                />
+                <text className="value" x="4" y={y(school) - 8} style={{ fill: LED.blue }}>
+                  UCLA {compactMoney(school)}
+                </text>
+              </>
             ) : null}
-            <line x1="0" x2={width} y1={lineY} y2={lineY} stroke="#F2C14E" strokeWidth="2" strokeDasharray="1 6" strokeLinecap="round" />
-            <text className="value" x={width - 4} y={lineY - 6} textAnchor="end" style={{ fill: "#F2C14E" }}>
+            <path d={steps} fill="none" stroke={LED.amber} strokeWidth="2" strokeDasharray="1 6" strokeLinecap="round" />
+            <text className="value" x={width - 4} y={y(line) - 8} textAnchor="end" style={{ fill: LED.amber }}>
               {compactMoney(line)}/wk
             </text>
           </g>
         </svg>
       </div>
-      {described ? (
-        <div className="readout-bar wrap" aria-hidden="true">
-          <span className="caret">▸</span>
-          {describe(described).map((part) => (
-            <span key={part.text} className={part.tone}>
-              {part.text}
-            </span>
-          ))}
-          {active === null ? (
-            <span className="faint">point at a week</span>
-          ) : onPick && described.state !== "future" ? (
-            <span className="faint">click to see its transactions</span>
-          ) : null}
-        </div>
-      ) : null}
-      <div className="legend">
-        <span>
-          <i style={{ backgroundColor: "#F2C14E" }} />
-          Weekly line
-        </span>
-        {schoolY !== null ? (
-          <span>
-            <i style={{ backgroundColor: "#7CB8FF" }} />
-            UCLA estimate
-          </span>
-        ) : null}
-        <span>
-          <i style={{ backgroundColor: "#9FD39B" }} />
-          Saved that week
-        </span>
-        <span>
-          <i style={{ backgroundColor: CORAL }} />
-          Over the line
-        </span>
-      </div>
+      {described ? <ReadoutBar parts={describe(described)} /> : null}
     </div>
   );
 }
